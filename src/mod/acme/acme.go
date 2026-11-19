@@ -18,12 +18,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/go-acme/lego/v5/acme"
 	"github.com/go-acme/lego/v5/certcrypto"
 	"github.com/go-acme/lego/v5/certificate"
+	"github.com/go-acme/lego/v5/challenge"
 	"github.com/go-acme/lego/v5/challenge/dns01"
 	"github.com/go-acme/lego/v5/challenge/http01"
 	"github.com/go-acme/lego/v5/lego"
@@ -66,8 +67,15 @@ type ACMEHandler struct {
 	KeyFileMode    os.FileMode
 	PublicFileMode os.FileMode
 
-	// Number of ObtainCert calls currently solving an HTTP-01 challenge
-	httpChallengesInFlight atomic.Int32
+	// PrepareHTTP01Challenge, if set, is called before every HTTP-01
+	// challenge, whatever started it (manual request, auto renew, Renew Now),
+	// e.g. to make sure port 80 is served. The returned function is called
+	// once the challenge is done
+	PrepareHTTP01Challenge func() (release func())
+
+	// Tokens of the HTTP-01 challenges Zoraxy is presenting right now
+	httpChallengeTokens     map[string]int
+	httpChallengeTokensLock sync.Mutex
 }
 
 // NewACME creates a new ACMEHandler instance.
@@ -278,15 +286,18 @@ func (a *ACMEHandler) ObtainCert(domains []string, certificateName string, email
 			return false, err
 		}
 	} else {
-		err = client.Challenge.SetHTTP01Provider(http01.NewProviderServer("", a.Port))
+		err = client.Challenge.SetHTTP01Provider(&http01TokenTracker{
+			Provider: http01.NewProviderServer("", a.Port),
+			handler:  a,
+		})
 		if err != nil {
 			a.Logf("Failed to resolve HTTP01 Provider", err)
 			return false, err
 		}
-		// Mark the HTTP-01 challenge as in progress until this function returns,
-		// so the proxy only intercepts /.well-known/acme-challenge/ while needed
-		a.httpChallengesInFlight.Add(1)
-		defer a.httpChallengesInFlight.Add(-1)
+		if a.PrepareHTTP01Challenge != nil {
+			release := a.PrepareHTTP01Challenge()
+			defer release()
+		}
 	}
 
 	// New users will need to register
@@ -469,11 +480,55 @@ func (a *ACMEHandler) Getport() string {
 	return a.Port
 }
 
-// HTTPChallengeInProgress returns true while Zoraxy is solving an HTTP-01
-// challenge, i.e. while requests to /.well-known/acme-challenge/ must be
-// answered by Zoraxy instead of being forwarded to the proxy backend
-func (a *ACMEHandler) HTTPChallengeInProgress() bool {
-	return a.httpChallengesInFlight.Load() > 0
+// IsPresentingHTTP01Token returns true if Zoraxy is presenting the HTTP-01
+// challenge with this token right now, i.e. if a request for
+// /.well-known/acme-challenge/<token> must be answered by Zoraxy instead of
+// being forwarded to the proxy backend. Challenges of backends that run their
+// own ACME client have other tokens, so they still reach the backend (#1342)
+func (a *ACMEHandler) IsPresentingHTTP01Token(token string) bool {
+	a.httpChallengeTokensLock.Lock()
+	defer a.httpChallengeTokensLock.Unlock()
+	return a.httpChallengeTokens[token] > 0
+}
+
+func (a *ACMEHandler) addHTTP01Token(token string) {
+	a.httpChallengeTokensLock.Lock()
+	defer a.httpChallengeTokensLock.Unlock()
+	if a.httpChallengeTokens == nil {
+		a.httpChallengeTokens = map[string]int{}
+	}
+	a.httpChallengeTokens[token]++
+}
+
+func (a *ACMEHandler) removeHTTP01Token(token string) {
+	a.httpChallengeTokensLock.Lock()
+	defer a.httpChallengeTokensLock.Unlock()
+	if a.httpChallengeTokens[token] <= 1 {
+		delete(a.httpChallengeTokens, token)
+		return
+	}
+	a.httpChallengeTokens[token]--
+}
+
+// http01TokenTracker wraps the lego HTTP-01 provider and records the tokens
+// it presents (see IsPresentingHTTP01Token)
+type http01TokenTracker struct {
+	challenge.Provider
+	handler *ACMEHandler
+}
+
+func (t *http01TokenTracker) Present(ctx context.Context, domain, token, keyAuth string) error {
+	t.handler.addHTTP01Token(token)
+	err := t.Provider.Present(ctx, domain, token, keyAuth)
+	if err != nil {
+		t.handler.removeHTTP01Token(token)
+	}
+	return err
+}
+
+func (t *http01TokenTracker) CleanUp(ctx context.Context, domain, token, keyAuth string) error {
+	defer t.handler.removeHTTP01Token(token)
+	return t.Provider.CleanUp(ctx, domain, token, keyAuth)
 }
 
 // contains checks if a string is present in a slice.

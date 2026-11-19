@@ -48,7 +48,9 @@ func initACME() *acme.ACMEHandler {
 	keyFileMode := parseACMEFileMode(*acmeKeyFileMode, 0o600, "acmekeymode")
 	publicFileMode := parseACMEFileMode(*acmePublicFileMode, 0o644, "acmepublicmode")
 
-	return acme.NewACME(strconv.Itoa(port), sysdb, SystemWideLogger, *acmeTestMode, keyFileMode, publicFileMode)
+	handler := acme.NewACME(strconv.Itoa(port), sysdb, SystemWideLogger, *acmeTestMode, keyFileMode, publicFileMode)
+	handler.PrepareHTTP01Challenge = acmePrepareHTTP01Challenge
+	return handler
 }
 
 func parseACMEFileMode(raw string, fallback os.FileMode, flagName string) os.FileMode {
@@ -80,21 +82,8 @@ func acmeRegisterSpecialRoutingRule() {
 	SystemWideLogger.Println("Assigned temporary port:" + acmeHandler.Getport())
 
 	err := dynamicProxyRouter.AddRoutingRules(&dynamicproxy.RoutingRule{
-		ID: "acme-autorenew",
-		MatchRule: func(r *http.Request) bool {
-			// Only intercept while Zoraxy is solving an HTTP-01 challenge itself.
-			// Outside of that window the request is routed like any other one,
-			// so backends that run their own ACME client keep working (#1342)
-			if acmeHandler == nil || !acmeHandler.HTTPChallengeInProgress() {
-				return false
-			}
-			// Use ParseRequestURI for strict RFC 3986 validation.
-			parsedURL, err := url.ParseRequestURI(r.RequestURI)
-			if err != nil {
-				return false
-			}
-			return strings.HasPrefix(parsedURL.Path, "/.well-known/acme-challenge/")
-		},
+		ID:        "acme-autorenew",
+		MatchRule: acmeIsOwnHTTP01Challenge,
 		RoutingHandler: func(w http.ResponseWriter, r *http.Request) {
 			parsedURL, err := url.ParseRequestURI(r.RequestURI)
 			if err != nil {
@@ -125,6 +114,7 @@ func acmeRegisterSpecialRoutingRule() {
 			req, err := http.NewRequest(http.MethodGet, internalURL, nil)
 			if err != nil {
 				fmt.Printf("client: could not create request: %s\n", err)
+				http.Error(w, "Unable to forward ACME challenge", http.StatusInternalServerError)
 				return
 			}
 			req.Host = r.Host
@@ -132,6 +122,7 @@ func acmeRegisterSpecialRoutingRule() {
 			res, err := http.DefaultClient.Do(req)
 			if err != nil {
 				fmt.Printf("client: error making http request: %s\n", err)
+				http.Error(w, "ACME challenge responder not reachable", http.StatusBadGateway)
 				return
 			}
 			defer res.Body.Close()
@@ -139,8 +130,12 @@ func acmeRegisterSpecialRoutingRule() {
 			resBody, err := io.ReadAll(res.Body)
 			if err != nil {
 				fmt.Printf("error reading: %s\n", err)
+				http.Error(w, "Unable to read ACME challenge response", http.StatusBadGateway)
 				return
 			}
+			// Relay the status, so the CA does not take an error page for the
+			// key authorization
+			w.WriteHeader(res.StatusCode)
 			w.Write(resBody)
 		},
 		Enabled:                true,
@@ -149,6 +144,23 @@ func acmeRegisterSpecialRoutingRule() {
 	if err != nil {
 		SystemWideLogger.PrintAndLog("ACME", "Unable register temp port for DNS resolver", err)
 	}
+}
+
+// acmeIsOwnHTTP01Challenge returns true for the HTTP-01 challenge requests of
+// Zoraxy's own certificate requests. Other challenges are routed like any
+// other request, so backends that run their own ACME client keep working,
+// also while Zoraxy is requesting a certificate itself (#1342)
+func acmeIsOwnHTTP01Challenge(r *http.Request) bool {
+	// Use ParseRequestURI for strict RFC 3986 validation.
+	parsedURL, err := url.ParseRequestURI(r.RequestURI)
+	if err != nil {
+		return false
+	}
+	token, isChallenge := strings.CutPrefix(parsedURL.Path, "/.well-known/acme-challenge/")
+	if !isChallenge {
+		return false
+	}
+	return acmeHandler != nil && acmeHandler.IsPresentingHTTP01Token(token)
 }
 
 // remove the special routing rule for ACME
@@ -160,20 +172,13 @@ func acmeDeregisterSpecialRoutingRule() {
 // This function check if the renew setup is satisfied. If not, toggle them automatically
 func AcmeCheckAndHandleRenewCertificate(w http.ResponseWriter, r *http.Request) {
 	requireRestoreHttpsRedirect := false
-	requireRestorePort80 := false
 	dnsPara, _ := utils.PostBool(r, "dns")
 	if !dnsPara {
 		// HTTP-01 challenge
 		switch dynamicProxyRouter.Option.Port {
 		case 443:
-			// Check if port 80 is enabled
-			if !dynamicProxyRouter.Option.ListenOnPort80 {
-				// Enable port 80 temporarily
-				SystemWideLogger.PrintAndLog("ACME", "Temporarily enabling port 80 listener to handle ACME request ", nil)
-				dynamicProxyRouter.UpdatePort80ListenerState(true)
-				requireRestorePort80 = true
-				time.Sleep(2 * time.Second)
-			}
+			// The port 80 listener is enabled by acmePrepareHTTP01Challenge if
+			// needed, once ObtainCert knows the challenge type it really uses
 
 			// Enable port 80 to 443 redirect
 			if !dynamicProxyRouter.Option.ForceHttpsRedirect {
@@ -203,11 +208,6 @@ func AcmeCheckAndHandleRenewCertificate(w http.ResponseWriter, r *http.Request) 
 	tlsCertManager.UpdateLoadedCertList()
 
 	// Restore original settings only if they were changed
-	if requireRestorePort80 {
-		// Restore port 80 listener
-		SystemWideLogger.PrintAndLog("ACME", "Restoring previous port 80 listener settings", nil)
-		dynamicProxyRouter.UpdatePort80ListenerState(false)
-	}
 	if requireRestoreHttpsRedirect {
 		// Restore HTTP to HTTPS redirect setting that was temporarily enabled
 		SystemWideLogger.PrintAndLog("ACME", "Restoring HTTP to HTTPS redirect settings", nil)

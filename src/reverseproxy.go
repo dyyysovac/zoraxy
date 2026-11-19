@@ -106,6 +106,9 @@ func parseCaptchaConfigFromRequest(r *http.Request) (*dynamicproxy.CaptchaConfig
 
 // Add user customizable reverse proxy
 func ReverseProxyInit() {
+	//Also release waiting HTTP-01 challenges if the start up fails
+	defer markReverseProxyStarted()
+
 	/*
 		Load Reverse Proxy Ingress Settings
 	*/
@@ -291,6 +294,8 @@ func ReverseProxyInit() {
 		dynamicProxyRouter.StartProxyService()
 		SystemWideLogger.Println("Dynamic Reverse Proxy service started")
 	}
+	//Let HTTP-01 challenges started before this point continue (see acme_port80.go)
+	markReverseProxyStarted()
 
 	//Add all proxy services to uptime monitor
 	//Create a uptime monitor service
