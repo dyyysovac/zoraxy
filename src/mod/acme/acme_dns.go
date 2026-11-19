@@ -8,6 +8,11 @@ import (
 	"strings"
 
 	"github.com/go-acme/lego/v5/challenge"
+	"github.com/go-acme/lego/v5/platform/env"
+	"github.com/go-acme/lego/v5/providers/dns/exoscale"
+	"github.com/go-acme/lego/v5/providers/dns/jdcloud"
+	"github.com/go-acme/lego/v5/providers/dns/lightsail"
+	"github.com/go-acme/lego/v5/providers/dns/vkcloud"
 	"imuslab.com/zoraxy/mod/acme/acmedns"
 )
 
@@ -29,6 +34,10 @@ func GetDnsChallengeProviderByName(dnsProvider string, dnsCredentials string, pp
 	if err != nil {
 		return nil, err
 	}
+
+	// Fill the defaults lego only sets when it reads its config from the
+	// environment (e.g. vkcloud DNSEndpoint, lightsail Region)
+	applyEnvOnlyDnsProviderDefaults(dnsProvider, dnsCredentialsMap)
 
 	// Clear the PollingInterval and PropagationTimeout field and conert to int
 	userDefinedPollingInterval := 2
@@ -159,6 +168,60 @@ func migrateLegacyDnsCredentials(dnsProvider string, credentials map[string]any)
 // env based NewDNSProvider()), used when the user leaves the field empty
 var defaultDnsProviderEndpoints = map[string]string{
 	"checkdomain": "https://api.checkdomain.de", // lego checkdomain internal.DefaultEndpoint
+}
+
+// envOnlyDnsProviderDefault is a default that lego reads from envVar in its
+// NewDNSProvider(), falling back to value if the variable is not set
+type envOnlyDnsProviderDefault struct {
+	envVar string
+	value  string
+}
+
+// envOnlyDnsProviderDefaults are the settings of providers whose lego
+// NewDefaultConfig() leaves them empty (lego only sets them in the env based
+// NewDNSProvider()), used when the user leaves the field empty. Without them
+// the provider cannot be created or its API requests fail
+var envOnlyDnsProviderDefaults = map[string]map[string]envOnlyDnsProviderDefault{
+	"exoscale": {
+		// lego exoscale NewDNSProvider(): string(egoscale.CHGva2). An empty
+		// endpoint replaces the egoscale default with ""
+		"Endpoint": {exoscale.EnvEndpoint, "https://api-ch-gva-2.exoscale.com/v2"},
+	},
+	"jdcloud": {
+		// lego jdcloud NewDNSProvider(): "cn-north-1"
+		"RegionID": {jdcloud.EnvRegionID, "cn-north-1"},
+	},
+	"lightsail": {
+		// lego lightsail NewDNSProvider(): "us-east-1"
+		"Region": {lightsail.EnvRegion, "us-east-1"},
+	},
+	"vkcloud": {
+		// lego vkcloud defaultDNSEndpoint
+		"DNSEndpoint": {vkcloud.EnvDNSEndpoint, "https://mcs.mail.ru/public-dns/v2/dns"},
+		// lego vkcloud defaultIdentityEndpoint
+		"IdentityEndpoint": {vkcloud.EnvIdentityEndpoint, "https://infra.mail.ru/identity/v3/"},
+		// lego vkcloud defaultDomainName
+		"DomainName": {vkcloud.EnvDomainName, "users"},
+	},
+}
+
+// applyEnvOnlyDnsProviderDefaults adds the envOnlyDnsProviderDefaults of the
+// provider that are missing from the credentials. Like lego, the environment
+// variable is used if it is set
+func applyEnvOnlyDnsProviderDefaults(dnsProvider string, credentials map[string]any) {
+	for field, fieldDefault := range envOnlyDnsProviderDefaults[dnsProvider] {
+		// json.Unmarshal matches keys case-insensitively
+		isSet := false
+		for key := range credentials {
+			if strings.EqualFold(key, field) {
+				isSet = true
+				break
+			}
+		}
+		if !isSet {
+			credentials[field] = env.GetOrDefaultString(fieldDefault.envVar, fieldDefault.value)
+		}
+	}
 }
 
 // extractDnsProviderURL removes the *url.URL field of the provider from the

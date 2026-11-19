@@ -4,6 +4,11 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/go-acme/lego/v5/providers/dns/exoscale"
+	"github.com/go-acme/lego/v5/providers/dns/jdcloud"
+	"github.com/go-acme/lego/v5/providers/dns/lightsail"
+	"github.com/go-acme/lego/v5/providers/dns/vkcloud"
 )
 
 // legoConfigField reads a field of the unexported config of a lego provider
@@ -129,5 +134,91 @@ func TestGetDnsChallengeProviderByName_LegacyCredentials(t *testing.T) {
 	_, err = GetDnsChallengeProviderByName("azure", `{"ClientID":"id"}`, 600)
 	if err == nil || !strings.Contains(err.Error(), "azuredns") {
 		t.Errorf("azure: expected an error naming azuredns, got %v", err)
+	}
+}
+
+// Some lego defaults are only set by the env based NewDNSProvider(), not by
+// NewDefaultConfig(). The form sends only the credentials, the rest is ""
+func TestGetDnsChallengeProviderByName_EnvOnlyDefaults(t *testing.T) {
+	tests := []struct {
+		provider string
+		creds    string
+		want     map[string]string // config field => lego default
+		envVars  []string          // lego environment variables of the fields
+	}{
+		{
+			provider: "exoscale",
+			creds:    `{"APIKey":"key","APISecret":"secret","Endpoint":"","PropagationTimeout":"600","PollingInterval":"2"}`,
+			want:     map[string]string{"Endpoint": "https://api-ch-gva-2.exoscale.com/v2"},
+			envVars:  []string{exoscale.EnvEndpoint},
+		},
+		{
+			provider: "jdcloud",
+			creds:    `{"AccessKeyID":"id","AccessKeySecret":"secret","RegionID":"","PropagationTimeout":"600","PollingInterval":"2"}`,
+			want:     map[string]string{"RegionID": "cn-north-1"},
+			envVars:  []string{jdcloud.EnvRegionID},
+		},
+		{
+			//lightsail takes the AWS credentials from the environment, the form has no credential field
+			provider: "lightsail",
+			creds:    `{"DNSZone":"","Region":"","PropagationTimeout":"600","PollingInterval":"2"}`,
+			want:     map[string]string{"Region": "us-east-1"},
+			envVars:  []string{lightsail.EnvRegion},
+		},
+		{
+			provider: "vkcloud",
+			creds:    `{"ProjectID":"project","Username":"user","Password":"secret","DNSEndpoint":"","IdentityEndpoint":"","DomainName":"","PropagationTimeout":"600","PollingInterval":"2"}`,
+			want: map[string]string{
+				"DNSEndpoint":      "https://mcs.mail.ru/public-dns/v2/dns",
+				"IdentityEndpoint": "https://infra.mail.ru/identity/v3/",
+				"DomainName":       "users",
+			},
+			envVars: []string{vkcloud.EnvDNSEndpoint, vkcloud.EnvIdentityEndpoint, vkcloud.EnvDomainName},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			for _, envVar := range tt.envVars {
+				t.Setenv(envVar, "")
+			}
+
+			provider, err := GetDnsChallengeProviderByName(tt.provider, tt.creds, 600)
+			if err != nil {
+				t.Fatalf("%s: %v", tt.provider, err)
+			}
+			for field, want := range tt.want {
+				if got := legoConfigField(t, provider, field).String(); got != want {
+					t.Errorf("%s %s = %q, want the lego default %q", tt.provider, field, got, want)
+				}
+			}
+		})
+	}
+}
+
+// A value entered in the form or set in the lego environment variable is used
+// instead of the default, the same way lego's NewDNSProvider() does
+func TestGetDnsChallengeProviderByName_EnvOnlyDefaultsOverride(t *testing.T) {
+	t.Setenv(jdcloud.EnvRegionID, "cn-east-2")
+
+	provider, err := GetDnsChallengeProviderByName("jdcloud", `{"AccessKeyID":"id","AccessKeySecret":"secret","RegionID":""}`, 600)
+	if err != nil {
+		t.Fatalf("jdcloud: %v", err)
+	}
+	if region := legoConfigField(t, provider, "RegionID").String(); region != "cn-east-2" {
+		t.Errorf("jdcloud RegionID = %q, want %s from the environment", region, jdcloud.EnvRegionID)
+	}
+
+	for _, creds := range []string{
+		`{"AccessKeyID":"id","AccessKeySecret":"secret","RegionID":"cn-south-1"}`,
+		`{"AccessKeyID":"id","AccessKeySecret":"secret","regionid":"cn-south-1"}`,
+	} {
+		provider, err = GetDnsChallengeProviderByName("jdcloud", creds, 600)
+		if err != nil {
+			t.Fatalf("jdcloud %s: %v", creds, err)
+		}
+		if region := legoConfigField(t, provider, "RegionID").String(); region != "cn-south-1" {
+			t.Errorf("jdcloud %s: RegionID = %q, want the value entered by the user", creds, region)
+		}
 	}
 }

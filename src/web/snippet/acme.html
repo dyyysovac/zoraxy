@@ -712,10 +712,11 @@
         return;
       }
 
-      //Check if all fields is empty. If yes, do not update the config
+      //Check if all text fields (credentials, URLs...) are empty. If yes, do not update the config
+      //Number and checkbox fields always have a value (pre-filled defaults, "on"), so they are not checked
       let allFieldsEmpty = true;
-      $(".dnsConfigField").each(function(){
-        if ($(this).find("input").val().trim() != ""){
+      $(".dnsConfigField input[type=text]").each(function(){
+        if ($(this).val().trim() != ""){
           allFieldsEmpty = false;
         }
       });
