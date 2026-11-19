@@ -170,8 +170,9 @@
     //Renew certificate by button press
     //dns can be left undefined to use the challenge type stored for the certificate.
     //filename is the name of the certificate to replace, by default it is
-    //derived from the domains
-    function renewCertificate(domain, dns, btn=undefined, filename=undefined){
+    //derived from the domains. Other domains of the replaced certificate are
+    //kept unless exactDomains is true
+    function renewCertificate(domain, dns, btn=undefined, filename=undefined, exactDomains=false){
         let defaultCA = $("#defaultCA").dropdown("get value");
         if (defaultCA.trim() == ""){
             defaultCA = "Let's Encrypt";
@@ -215,7 +216,7 @@
                     initManagedDomainCertificateList();
                 }, 3000);
             }
-        }, filename);
+        }, filename, exactDomains);
     }
 
     /*
@@ -223,7 +224,7 @@
     */
 
    // Obtain certificate from API, only support one domain
-   function obtainCertificate(domains, dns, usingCa = "Let's Encrypt", callback=undefined, certFilename=undefined) {
+   function obtainCertificate(domains, dns, usingCa = "Let's Encrypt", callback=undefined, certFilename=undefined, exactDomains=false) {
         //Drop spaces and empty entries, e.g. from a trailing comma or an empty alias
         domains = domains.split(",").map(d => d.trim()).filter(d => d != "").join(",");
         //Load the ACME email from server side
@@ -282,6 +283,7 @@
                         caURL: caURL,
                         skipTLS: skipTLSValue,
                         dns: dns,
+                        exactDomains: exactDomains,
                     },
                     success: function(response) {
                         if (response.error) {

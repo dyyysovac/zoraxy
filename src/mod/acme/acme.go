@@ -541,6 +541,34 @@ func contains(slice []string, str string) bool {
 	return false
 }
 
+// withExistingCertDomains returns the requested domains followed by the other
+// domains of the existing certificate <filename>.pem, if there is one. The
+// requested domains stay first and in order, the first one becomes the CN
+func withExistingCertDomains(requested []string, filename string) []string {
+	sanDomains, err := ExtractDomainsFromPEM(fmt.Sprintf("./conf/certs/%s.pem", filename))
+	if err != nil {
+		return requested
+	}
+	return mergeDomainsKeepOrder(requested, sanDomains)
+}
+
+// mergeDomainsKeepOrder returns the unique domains of both lists, keeping the
+// order of the first list followed by the domains only found in the second
+func mergeDomainsKeepOrder(primary []string, extra []string) []string {
+	merged := make([]string, 0, len(primary)+len(extra))
+	seen := map[string]struct{}{}
+	for _, list := range [][]string{primary, extra} {
+		for _, d := range list {
+			if _, ok := seen[d]; ok {
+				continue
+			}
+			seen[d] = struct{}{}
+			merged = append(merged, d)
+		}
+	}
+	return merged
+}
+
 // parseDomainList splits a comma separated domain list and normalizes each
 // domain. Empty entries, e.g. from a trailing comma or an empty alias, are
 // skipped
@@ -678,10 +706,15 @@ func (a *ACMEHandler) HandleRenewCertificate(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// The certificate gets exactly the requested domains. The SANs of the
-	// existing certificate are not added back: the certificate list sends
-	// them itself when renewing, and adding them made a removed alias come
-	// back on every request, failing it once its DNS moved away
+	// Keep the other domains of the certificate that is replaced (e.g. a
+	// wildcard added in the ACME tool to a certificate named after the root
+	// domain), unless the caller asks for exactly the requested domains, e.g.
+	// to drop an alias that was removed from the host
+	exactDomains, _ := utils.PostBool(r, "exactDomains")
+	if !exactDomains {
+		cleanedDomains = withExistingCertDomains(cleanedDomains, filename)
+		a.Logf("Renewal domains including SANs from PEM: "+strings.Join(cleanedDomains, ","), nil)
+	}
 
 	// Extract DNS servers from the request
 	var dnsServers []string
