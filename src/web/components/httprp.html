@@ -1179,13 +1179,8 @@
         let captchaRecaptchaScore = $(editor).find(".RecaptchaScore").val();
         let captchaPathPrefixes = $(editor).find(".CaptchaPathPrefixes").val();
 
-        let tags = getTagsArrayFromEndpoint(uuid);
-        if (tags.length > 0){
-            tags = tags.join(",");
-        }else{
-            tags = "";
-        }
-
+        //Tags are not sent: they are saved by the tag editor (/api/proxy/setTags)
+        //and the cached proxy list used here can be older than what it saved
         cfgPayload = {
                 "type": epttype,
                 "rootname": uuid,
@@ -1217,7 +1212,6 @@
                 "captchaRecaptchaVersion": captchaRecaptchaVersion,
                 "captchaRecaptchaScore": captchaRecaptchaScore,
                 "captchaPathPrefixes": captchaPathPrefixes,
-                "tags": tags,
             };
         console.log("updating proxy config:", cfgPayload);
 
@@ -1369,6 +1363,10 @@
     /* Listening Ports Management */
     function renderListeningPorts(uuid, ports){
         let editor = $("#httprpEditModalWrapper");
+        //The add and remove handlers both start from the list shown here, so a
+        //port removed after the editor was opened is not written back by an add
+        ports = ports.slice();
+        editor.data("listeningPorts", ports);
         let html = "";
         if (ports.length == 0) {
             html = '<small style="opacity: 0.3;">No alternative listening ports configured</small>';
@@ -1563,11 +1561,6 @@
         $(targetProxyRuleEle).attr("payload", encodeURIComponent(JSON.stringify(tags)));
     }
 
-
-    function getTagsArrayFromEndpoint(endpoint){
-        let subd = getEditingHttpProxyCachedSubd();
-        return tags = subd.Tags || [];
-    }
     
     /* Modal Events */
     $("#httprpEditDarkenLayer").on("click", function() {
@@ -1780,8 +1773,7 @@
 
         /* ------------ Listening Ports ------------ */
         // Populate listening ports
-        let listeningPorts = subd.ListeningPorts || [];
-        renderListeningPorts(uuid, listeningPorts);
+        renderListeningPorts(uuid, subd.ListeningPorts || []);
         
         // Bind add listening port button
         editor.find(".addListeningPortBtn").off("click").on("click", function(){
@@ -1797,18 +1789,17 @@
                 return;
             }
             
-            // Check if already exists
-            if (listeningPorts.includes(newPort)) {
+            // Check if already exists in the list currently shown
+            let currentPorts = editor.data("listeningPorts") || [];
+            if (currentPorts.includes(newPort)) {
                 msgbox("This port is already added", false);
                 return;
             }
             
-            // Add to array
-            listeningPorts.push(newPort);
-            
-            // Save to server
-            saveListeningPorts(uuid, listeningPorts, function(){
-                renderListeningPorts(uuid, listeningPorts);
+            // Save to server. The list is only updated if the server accepted it
+            let updatedPorts = currentPorts.concat([newPort]);
+            saveListeningPorts(uuid, updatedPorts, function(){
+                renderListeningPorts(uuid, updatedPorts);
                 editor.find(".new_listening_port_input").val("");
                 msgbox("Listening port added");
             });
@@ -2183,6 +2174,8 @@
         let currentEditingHostname = getEditingHttpProxyHostname();
         $.get("/api/proxy/list?type=host", function(data){
             data.sort((a,b) => (a.RootOrMatchingDomain > b.RootOrMatchingDomain) ? 1 : ((b.RootOrMatchingDomain > a.RootOrMatchingDomain) ? -1 : 0));
+            //Keep the cached list in sync, e.g. after the hostname was renamed
+            httpProxyList = data;
             let editingHost = data.find(subd => subd.RootOrMatchingDomain === currentEditingHostname);
             if (editingHost) {
                 populateAndBindEventsToHTTPProxyEditor(editingHost);

@@ -793,6 +793,10 @@ func ReverseProxyHandleEditEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//Tags are saved by /api/proxy/setTags. Only change them here if the caller
+	//sent them, so a save with a stale tag list cannot overwrite them
+	r.ParseForm()
+	_, tagsGiven := r.Form["tags"]
 	tagStr, _ := utils.PostPara(r, "tags")
 	tags := []string{}
 	if tagStr != "" {
@@ -847,7 +851,9 @@ func ReverseProxyHandleEditEndpoint(w http.ResponseWriter, r *http.Request) {
 	newProxyEndpoint.BlockCommonExploits = blockCommonExploits
 	newProxyEndpoint.BlockAICrawlers = blockAICrawlers
 	newProxyEndpoint.MitigationAction = mitigationAction
-	newProxyEndpoint.Tags = tags
+	if tagsGiven {
+		newProxyEndpoint.Tags = tags
+	}
 
 	//Prepare to replace the current routing rule
 	readyRoutingRule, err := dynamicProxyRouter.PrepareProxyRoute(newProxyEndpoint)
