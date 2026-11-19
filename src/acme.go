@@ -171,21 +171,15 @@ func acmeDeregisterSpecialRoutingRule() {
 
 // This function check if the renew setup is satisfied. If not, toggle them automatically
 func AcmeCheckAndHandleRenewCertificate(w http.ResponseWriter, r *http.Request) {
-	requireRestoreHttpsRedirect := false
 	if !acme.RequestUsesDNSChallenge(r) {
 		// HTTP-01 challenge
 		switch dynamicProxyRouter.Option.Port {
 		case 443:
-			// The port 80 listener is enabled by acmePrepareHTTP01Challenge if
-			// needed, once ObtainCert knows the challenge type it really uses
-
-			// Enable port 80 to 443 redirect
-			if !dynamicProxyRouter.Option.ForceHttpsRedirect {
-				SystemWideLogger.Println("Temporary enabling HTTP to HTTPS redirect for ACME certificate renew requests")
-				dynamicProxyRouter.UpdateHttpToHttpsRedirectSetting(true)
-				// Mark that we need to restore this setting after renewal
-				requireRestoreHttpsRedirect = true
-			}
+			// Port 80 is served by acmePrepareHTTP01Challenge if needed, once
+			// ObtainCert knows the challenge type it really uses. The port 80
+			// handlers answer the challenge before any redirect or proxying,
+			// so the proxy settings are not changed (changing them restarts
+			// the proxy, and starts it again if the user stopped it)
 
 		case 80:
 			// Go ahead
@@ -205,13 +199,6 @@ func AcmeCheckAndHandleRenewCertificate(w http.ResponseWriter, r *http.Request) 
 
 	// Update the TLS cert store buffer
 	tlsCertManager.UpdateLoadedCertList()
-
-	// Restore original settings only if they were changed
-	if requireRestoreHttpsRedirect {
-		// Restore HTTP to HTTPS redirect setting that was temporarily enabled
-		SystemWideLogger.PrintAndLog("ACME", "Restoring HTTP to HTTPS redirect settings", nil)
-		dynamicProxyRouter.UpdateHttpToHttpsRedirectSetting(false)
-	}
 }
 
 // HandleACMEPreferredCA return the user preferred / default CA for new subdomain auto creation
