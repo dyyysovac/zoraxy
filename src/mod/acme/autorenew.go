@@ -8,6 +8,7 @@ import (
 	"net/mail"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -465,39 +466,53 @@ func (a *AutoRenewer) HanldeSetEAB(w http.ResponseWriter, r *http.Request) {
 
 }
 
-// Handle update auto renew DNS configuration
-// keepStoredDnsCredentials returns true if the posted DNS credentials only
-// repeat the provider stored for the certificate without entering any value,
-// i.e. the user requested the certificate again without retyping the secrets.
-// A different provider or any entered value replaces the stored credentials,
-// and so does a first configuration (some providers, e.g. route53 with
-// credentials from the environment, need no value at all)
-func (a *AutoRenewer) keepStoredDnsCredentials(filename string, dnsProvider string, dnsCredentials string) bool {
+// mergeStoredDnsCredentials returns the DNS credentials to save for the
+// certificate. The form does not show the stored credentials, so when the
+// provider stored for the certificate is posted again, fields left empty keep
+// their stored value (e.g. the secrets when the certificate is requested
+// again without retyping them), while every entered value, number and
+// checkbox replaces it. A different provider or a first configuration is
+// saved as posted (some providers, e.g. route53 with credentials from the
+// environment, need no value at all). keptFields lists the stored values that
+// were kept
+func (a *AutoRenewer) mergeStoredDnsCredentials(filename string, dnsProvider string, dnsCredentials string) (merged string, keptFields []string) {
 	storedProvider := ""
 	storedCredentials := ""
 	if err := a.AcmeHandler.Database.Read("acme", filename+"_dns_provider", &storedProvider); err != nil || storedProvider != dnsProvider {
-		return false
+		return dnsCredentials, nil
 	}
 	if err := a.AcmeHandler.Database.Read("acme", filename+"_dns_credentials", &storedCredentials); err != nil || storedCredentials == "" {
-		return false
+		return dnsCredentials, nil
 	}
 
 	posted := map[string]any{}
+	stored := map[string]any{}
 	if err := json.Unmarshal([]byte(dnsCredentials), &posted); err != nil {
-		return false
+		return dnsCredentials, nil
 	}
+	if err := json.Unmarshal([]byte(storedCredentials), &stored); err != nil {
+		return dnsCredentials, nil
+	}
+
 	for key, value := range posted {
-		if key == "PollingInterval" || key == "PropagationTimeout" {
-			//Always filled in by the form
-			continue
+		if str, ok := value.(string); ok && strings.TrimSpace(str) == "" {
+			if storedValue, ok := stored[key].(string); ok && strings.TrimSpace(storedValue) != "" {
+				keptFields = append(keptFields, key)
+				continue
+			}
 		}
-		if str, ok := value.(string); ok && strings.TrimSpace(str) != "" {
-			return false
-		}
+		stored[key] = value
 	}
-	return true
+
+	js, err := json.Marshal(stored)
+	if err != nil {
+		return dnsCredentials, nil
+	}
+	sort.Strings(keptFields)
+	return string(js), keptFields
 }
 
+// Handle update auto renew DNS configuration
 func (a *AutoRenewer) HandleSetDNS(w http.ResponseWriter, r *http.Request) {
 	dnsProvider, err := utils.PostPara(r, "dnsProvider")
 	if err != nil {
@@ -526,13 +541,11 @@ func (a *AutoRenewer) HandleSetDNS(w http.ResponseWriter, r *http.Request) {
 		a.AcmeHandler.Database.NewTable("acme")
 	}
 
-	if a.keepStoredDnsCredentials(filename, dnsProvider, dnsCredentials) {
-		//The form does not show the stored credentials, so requesting the
-		//certificate again without retyping them must not save an empty config
-		a.Logf("No DNS credentials entered for "+filename+", keeping the stored "+dnsProvider+" credentials", nil)
-	} else {
-		a.AcmeHandler.Database.Write("acme", filename+"_dns_credentials", dnsCredentials)
+	dnsCredentials, keptFields := a.mergeStoredDnsCredentials(filename, dnsProvider, dnsCredentials)
+	if len(keptFields) > 0 {
+		a.Logf("Keeping the stored "+dnsProvider+" settings left empty for "+filename+": "+strings.Join(keptFields, ", "), nil)
 	}
+	a.AcmeHandler.Database.Write("acme", filename+"_dns_credentials", dnsCredentials)
 	a.AcmeHandler.Database.Write("acme", filename+"_dns_provider", dnsProvider)
 	a.AcmeHandler.Database.Write("acme", filename+"_dns_servers", dnsServers)
 

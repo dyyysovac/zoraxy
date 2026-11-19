@@ -75,4 +75,17 @@ func TestHandleSetDNS_KeepsStoredCredentials(t *testing.T) {
 	if _, credentials := storedDNS(t, db); credentials != newCloudflare {
 		t.Fatalf("new credentials not saved: %q", credentials)
 	}
+
+	//Other settings changed without retyping the secret are saved, the
+	//secret is kept
+	postSetDNS(t, renewer, "cloudflare", `{"AuthToken":"","PollingInterval":"2","PropagationTimeout":"1800"}`)
+	if _, credentials := storedDNS(t, db); credentials != `{"AuthToken":"new-secret","PollingInterval":"2","PropagationTimeout":"1800"}` {
+		t.Fatalf("changed timeout not merged with the stored secret: %q", credentials)
+	}
+
+	postSetDNS(t, renewer, "infoblox", `{"Host":"infoblox.example.com","Password":"secret","SSLVerify":true}`)
+	postSetDNS(t, renewer, "infoblox", `{"Host":"","Password":"","SSLVerify":false}`)
+	if _, credentials := storedDNS(t, db); credentials != `{"Host":"infoblox.example.com","Password":"secret","SSLVerify":false}` {
+		t.Fatalf("checkbox change not merged with the stored values: %q", credentials)
+	}
 }
