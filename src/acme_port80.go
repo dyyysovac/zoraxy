@@ -85,6 +85,12 @@ func acmeReleaseHTTP01Challenge() {
 	if listenOnPort80 {
 		return
 	}
+	if !dynamicProxyRouter.Running {
+		//The proxy was stopped in the meantime. Restarting it to turn the
+		//listener off would start the proxy the user stopped
+		dynamicProxyRouter.Option.ListenOnPort80 = false
+		return
+	}
 	SystemWideLogger.PrintAndLog("ACME", "Restoring previous port 80 listener settings", nil)
 	dynamicProxyRouter.UpdatePort80ListenerState(false)
 }
