@@ -512,14 +512,14 @@ func ReverseProxyHandleAddEndpoint(w http.ResponseWriter, r *http.Request) {
 		//Check if it contains ",", if yes, split the remainings as alias
 		aliasHostnames := []string{}
 		if strings.Contains(rootOrMatchingDomain, ",") {
-			matchingDomains := strings.Split(rootOrMatchingDomain, ",")
-			if len(matchingDomains) > 1 {
-				rootOrMatchingDomain = matchingDomains[0]
-				for _, aliasHostname := range matchingDomains[1:] {
-					//Filter out any space
-					aliasHostnames = append(aliasHostnames, strings.TrimSpace(aliasHostname))
-				}
+			//Filter out any space and empty entries (e.g. a trailing comma)
+			matchingDomains := cleanHostnameList(strings.Split(rootOrMatchingDomain, ","))
+			if len(matchingDomains) == 0 {
+				utils.SendErrorResponse(w, "hostname not defined")
+				return
 			}
+			rootOrMatchingDomain = matchingDomains[0]
+			aliasHostnames = matchingDomains[1:]
 		}
 
 		//Generate a default authenticaion provider
@@ -913,6 +913,19 @@ func ReverseProxyHandleSetTags(w http.ResponseWriter, r *http.Request) {
 	utils.SendOK(w)
 }
 
+// cleanHostnameList trims the hostnames and drops empty ones. An empty alias
+// would make every certificate request for the host fail
+func cleanHostnameList(hostnames []string) []string {
+	cleaned := []string{}
+	for _, hostname := range hostnames {
+		hostname = strings.TrimSpace(hostname)
+		if hostname != "" {
+			cleaned = append(cleaned, hostname)
+		}
+	}
+	return cleaned
+}
+
 func ReverseProxyHandleAlias(w http.ResponseWriter, r *http.Request) {
 	rootNameOrMatchingDomain, err := utils.PostPara(r, "ep")
 	if err != nil {
@@ -948,7 +961,7 @@ func ReverseProxyHandleAlias(w http.ResponseWriter, r *http.Request) {
 
 	//Set the current alias
 	newProxyEndpoint := dynamicproxy.CopyEndpoint(targetProxyEntry)
-	newProxyEndpoint.MatchingDomainAlias = newAlias
+	newProxyEndpoint.MatchingDomainAlias = cleanHostnameList(newAlias)
 
 	// Prepare to replace the current routing rule
 	readyRoutingRule, err := dynamicProxyRouter.PrepareProxyRoute(newProxyEndpoint)

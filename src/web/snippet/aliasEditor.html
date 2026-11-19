@@ -117,6 +117,10 @@
 
             function addAliasToRoutingRule(){
                 let newAliasHostname = $("#aliasHostname").val().trim();
+                if (newAliasHostname == ""){
+                    parent.msgbox("Alias hostname cannot be empty", false);
+                    return;
+                }
                 aliasList.push(newAliasHostname);
                 $("#aliasHostname").val("");
                 saveCurrentAliasList(function(data){

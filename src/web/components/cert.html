@@ -221,6 +221,8 @@
 
    // Obtain certificate from API, only support one domain
    function obtainCertificate(domains, dns, usingCa = "Let's Encrypt", callback=undefined) {
+        //Drop spaces and empty entries, e.g. from a trailing comma or an empty alias
+        domains = domains.split(",").map(d => d.trim()).filter(d => d != "").join(",");
         //Load the ACME email from server side
         let acmeEmail = "";
         $.get("/api/acme/autoRenew/email", function(data){

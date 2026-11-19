@@ -488,6 +488,27 @@ func contains(slice []string, str string) bool {
 
 // mergeDomainsKeepOrder returns the unique domains of both lists, keeping the
 // order of the first list followed by the domains only found in the second
+// parseDomainList splits a comma separated domain list and normalizes each
+// domain. Empty entries, e.g. from a trailing comma or an empty alias, are
+// skipped
+func parseDomainList(domainList string) ([]string, error) {
+	domains := []string{}
+	for _, d := range strings.Split(domainList, ",") {
+		if strings.TrimSpace(d) == "" {
+			continue
+		}
+		nd, err := netutils.NormalizeDomain(d)
+		if err != nil {
+			return nil, err
+		}
+		domains = append(domains, nd)
+	}
+	if len(domains) == 0 {
+		return nil, errors.New("no valid domain given")
+	}
+	return domains, nil
+}
+
 func mergeDomainsKeepOrder(primary []string, extra []string) []string {
 	merged := make([]string, 0, len(primary)+len(extra))
 	seen := map[string]struct{}{}
@@ -528,14 +549,11 @@ func (a *ACMEHandler) HandleRenewCertificate(w http.ResponseWriter, r *http.Requ
 	// Clean each domain
 	cleanedDomains := []string{}
 	if domainPara != "" {
-		for _, d := range strings.Split(domainPara, ",") {
-			// Apply normalization on each domain
-			nd, err := netutils.NormalizeDomain(d)
-			if err != nil {
-				utils.SendErrorResponse(w, jsonEscape(err.Error()))
-				return
-			}
-			cleanedDomains = append(cleanedDomains, nd)
+		var parseErr error
+		cleanedDomains, parseErr = parseDomainList(domainPara)
+		if parseErr != nil {
+			utils.SendErrorResponse(w, jsonEscape(parseErr.Error()))
+			return
 		}
 	}
 

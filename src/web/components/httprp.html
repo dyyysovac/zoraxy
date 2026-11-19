@@ -2125,7 +2125,11 @@
         let enableQuickRequestButton = true;
         let domains = [subd.RootOrMatchingDomain]; //Domain for getting certificate if needed
         for (var i = 0; i < subd.MatchingDomainAlias.length; i++){
-            let thisAliasName = subd.MatchingDomainAlias[i];
+            let thisAliasName = subd.MatchingDomainAlias[i].trim();
+            if (thisAliasName == ""){
+                //Empty alias saved by an older version
+                continue;
+            }
             domains.push(thisAliasName);
         }
 
