@@ -8,7 +8,6 @@ import (
 	"net/mail"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -466,50 +465,52 @@ func (a *AutoRenewer) HanldeSetEAB(w http.ResponseWriter, r *http.Request) {
 
 }
 
-// mergeStoredDnsCredentials returns the DNS credentials to save for the
-// certificate. The form does not show the stored credentials, so when the
-// provider stored for the certificate is posted again, fields left empty keep
-// their stored value (e.g. the secrets when the certificate is requested
-// again without retyping them), while every entered value, number and
-// checkbox replaces it. A different provider or a first configuration is
-// saved as posted (some providers, e.g. route53 with credentials from the
-// environment, need no value at all). keptFields lists the stored values that
-// were kept
-func (a *AutoRenewer) mergeStoredDnsCredentials(filename string, dnsProvider string, dnsCredentials string) (merged string, keptFields []string) {
+// keepStoredDnsCredentials returns true if the posted DNS config only
+// repeats the provider stored for the certificate without entering any
+// credential, i.e. the certificate is requested again without retyping the
+// secrets, which the form never shows. The stored config is then kept as a
+// whole. Otherwise the posted config replaces it as a whole, so a field can
+// still be cleared by entering the other ones, and a first configuration
+// without any value (e.g. route53 with credentials from the environment) is
+// saved
+func (a *AutoRenewer) keepStoredDnsCredentials(filename string, dnsProvider string, dnsCredentials string) bool {
 	storedProvider := ""
 	storedCredentials := ""
-	if err := a.AcmeHandler.Database.Read("acme", filename+"_dns_provider", &storedProvider); err != nil || storedProvider != dnsProvider {
-		return dnsCredentials, nil
+	if err := a.AcmeHandler.Database.Read("acme", filename+"_dns_provider", &storedProvider); err != nil {
+		return false
 	}
-	if err := a.AcmeHandler.Database.Read("acme", filename+"_dns_credentials", &storedCredentials); err != nil || storedCredentials == "" {
-		return dnsCredentials, nil
+	// Certificates saved by lego v4 builds can use old provider names
+	if newName, ok := legacyDnsProviderNames[storedProvider]; ok {
+		storedProvider = newName
+	}
+	if newName, ok := legacyDnsProviderNames[dnsProvider]; ok {
+		dnsProvider = newName
+	}
+	if storedProvider != dnsProvider {
+		return false
+	}
+	if err := a.AcmeHandler.Database.Read("acme", filename+"_dns_credentials", &storedCredentials); err != nil {
+		return false
+	}
+	stored := map[string]any{}
+	if err := json.Unmarshal([]byte(storedCredentials), &stored); err != nil || len(stored) == 0 {
+		return false
 	}
 
 	posted := map[string]any{}
-	stored := map[string]any{}
 	if err := json.Unmarshal([]byte(dnsCredentials), &posted); err != nil {
-		return dnsCredentials, nil
+		return false
 	}
-	if err := json.Unmarshal([]byte(storedCredentials), &stored); err != nil {
-		return dnsCredentials, nil
-	}
-
 	for key, value := range posted {
-		if str, ok := value.(string); ok && strings.TrimSpace(str) == "" {
-			if storedValue, ok := stored[key].(string); ok && strings.TrimSpace(storedValue) != "" {
-				keptFields = append(keptFields, key)
-				continue
-			}
+		if strings.EqualFold(key, "PollingInterval") || strings.EqualFold(key, "PropagationTimeout") {
+			//Always filled in by the form
+			continue
 		}
-		stored[key] = value
+		if str, ok := value.(string); ok && strings.TrimSpace(str) != "" {
+			return false
+		}
 	}
-
-	js, err := json.Marshal(stored)
-	if err != nil {
-		return dnsCredentials, nil
-	}
-	sort.Strings(keptFields)
-	return string(js), keptFields
+	return true
 }
 
 // Handle update auto renew DNS configuration
@@ -541,10 +542,15 @@ func (a *AutoRenewer) HandleSetDNS(w http.ResponseWriter, r *http.Request) {
 		a.AcmeHandler.Database.NewTable("acme")
 	}
 
-	dnsCredentials, keptFields := a.mergeStoredDnsCredentials(filename, dnsProvider, dnsCredentials)
-	if len(keptFields) > 0 {
-		a.Logf("Keeping the stored "+dnsProvider+" settings left empty for "+filename+": "+strings.Join(keptFields, ", "), nil)
+	if a.keepStoredDnsCredentials(filename, dnsProvider, dnsCredentials) {
+		//Nothing entered for the stored provider: keep its stored config, and
+		//tell the UI so it can say that other changed settings were not saved
+		a.Logf("No DNS credentials entered for "+filename+", keeping the stored "+dnsProvider+" config", nil)
+		a.AcmeHandler.Database.Write("acme", filename+"_dns_servers", dnsServers)
+		utils.SendJSONResponse(w, `{"kept":true}`)
+		return
 	}
+
 	a.AcmeHandler.Database.Write("acme", filename+"_dns_credentials", dnsCredentials)
 	a.AcmeHandler.Database.Write("acme", filename+"_dns_provider", dnsProvider)
 	a.AcmeHandler.Database.Write("acme", filename+"_dns_servers", dnsServers)

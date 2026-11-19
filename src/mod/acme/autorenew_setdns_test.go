@@ -12,7 +12,7 @@ import (
 	"imuslab.com/zoraxy/mod/info/logger"
 )
 
-func postSetDNS(t *testing.T, renewer *AutoRenewer, provider string, credentials string) {
+func postSetDNS(t *testing.T, renewer *AutoRenewer, provider string, credentials string) (kept bool) {
 	t.Helper()
 	form := url.Values{"filename": {"example.com"}, "dnsProvider": {provider}, "dnsCredentials": {credentials}}
 	r := httptest.NewRequest("POST", "/api/acme/autoRenew/setDNS", strings.NewReader(form.Encode()))
@@ -22,6 +22,7 @@ func postSetDNS(t *testing.T, renewer *AutoRenewer, provider string, credentials
 	if strings.Contains(w.Body.String(), "error") {
 		t.Fatalf("setDNS failed: %s", w.Body.String())
 	}
+	return strings.Contains(w.Body.String(), `"kept":true`)
 }
 
 func storedDNS(t *testing.T, db *database.Database) (string, string) {
@@ -33,9 +34,10 @@ func storedDNS(t *testing.T, db *database.Database) (string, string) {
 }
 
 // The ACME form never shows the stored credentials. Requesting a certificate
-// again without retyping them must keep them, while a first configuration
-// without any value (e.g. route53 with credentials from the environment) and
-// a provider switch must still be saved
+// again without entering any credential keeps the stored config as a whole
+// (and says so), anything entered replaces it as a whole. A first
+// configuration without any value (e.g. route53 with credentials from the
+// environment) and a provider switch are saved
 func TestHandleSetDNS_KeepsStoredCredentials(t *testing.T) {
 	db, err := database.NewDatabase(filepath.Join(t.TempDir(), "test.db"), dbinc.BackendBoltDB)
 	if err != nil {
@@ -49,10 +51,11 @@ func TestHandleSetDNS_KeepsStoredCredentials(t *testing.T) {
 	renewer := &AutoRenewer{AcmeHandler: &ACMEHandler{Database: db}, Logger: testLogger}
 
 	const cloudflare = `{"AuthToken":"secret","PollingInterval":"2","PropagationTimeout":"600"}`
-	const emptyCloudflare = `{"AuthToken":"","PollingInterval":"2","PropagationTimeout":"600"}`
 
 	//First configuration without any value is saved
-	postSetDNS(t, renewer, "route53", `{"AccessKeyID":"","SecretAccessKey":"","PollingInterval":"2","PropagationTimeout":"600"}`)
+	if postSetDNS(t, renewer, "route53", `{"AccessKeyID":"","SecretAccessKey":"","PollingInterval":"2","PropagationTimeout":"600"}`) {
+		t.Error("first configuration reported as kept")
+	}
 	if provider, _ := storedDNS(t, db); provider != "route53" {
 		t.Fatalf("first configuration not saved, provider = %q", provider)
 	}
@@ -63,29 +66,63 @@ func TestHandleSetDNS_KeepsStoredCredentials(t *testing.T) {
 		t.Fatalf("provider switch not saved: %q %q", provider, credentials)
 	}
 
-	//Same provider, nothing entered: the stored secret is kept
-	postSetDNS(t, renewer, "cloudflare", emptyCloudflare)
-	if _, credentials := storedDNS(t, db); credentials != cloudflare {
-		t.Fatalf("stored credentials overwritten with an empty config: %q", credentials)
+	//Same provider, nothing entered: the stored config is kept as a whole
+	//and the response says so, also when another setting was changed
+	for _, posted := range []string{
+		`{"AuthToken":"","PollingInterval":"2","PropagationTimeout":"600"}`,
+		`{"AuthToken":"","PollingInterval":"2","PropagationTimeout":"1800"}`,
+	} {
+		if !postSetDNS(t, renewer, "cloudflare", posted) {
+			t.Errorf("%s: response does not say the stored config was kept", posted)
+		}
+		if _, credentials := storedDNS(t, db); credentials != cloudflare {
+			t.Fatalf("%s: stored config changed: %q", posted, credentials)
+		}
 	}
 
-	//Same provider with a new value replaces it
-	const newCloudflare = `{"AuthToken":"new-secret","PollingInterval":"2","PropagationTimeout":"600"}`
-	postSetDNS(t, renewer, "cloudflare", newCloudflare)
-	if _, credentials := storedDNS(t, db); credentials != newCloudflare {
+	//Anything entered replaces the config as a whole, so another auth method
+	//does not keep the old token
+	const globalKey = `{"AuthEmail":"admin@example.com","AuthKey":"global-key","AuthToken":"","PollingInterval":"2","PropagationTimeout":"600"}`
+	if postSetDNS(t, renewer, "cloudflare", globalKey) {
+		t.Error("new credentials reported as kept")
+	}
+	if _, credentials := storedDNS(t, db); credentials != globalKey {
 		t.Fatalf("new credentials not saved: %q", credentials)
 	}
+}
 
-	//Other settings changed without retyping the secret are saved, the
-	//secret is kept
-	postSetDNS(t, renewer, "cloudflare", `{"AuthToken":"","PollingInterval":"2","PropagationTimeout":"1800"}`)
-	if _, credentials := storedDNS(t, db); credentials != `{"AuthToken":"new-secret","PollingInterval":"2","PropagationTimeout":"1800"}` {
-		t.Fatalf("changed timeout not merged with the stored secret: %q", credentials)
+// Certificates saved by Zoraxy builds with lego v4 use old provider names,
+// and a stored config can be "null"
+func TestHandleSetDNS_LegacyAndNullStoredConfig(t *testing.T) {
+	db, err := database.NewDatabase(filepath.Join(t.TempDir(), "test.db"), dbinc.BackendBoltDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	testLogger, err := logger.NewFmtLogger()
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewer := &AutoRenewer{AcmeHandler: &ACMEHandler{Database: db}, Logger: testLogger}
+	db.NewTable("acme")
+
+	const rfc2136 = `{"Nameserver":"ns.example.com:53","TSIGKey":"key","TSIGSecret":"secret"}`
+	db.Write("acme", "example.com_dns_provider", "rfc2136")
+	db.Write("acme", "example.com_dns_credentials", rfc2136)
+	if !postSetDNS(t, renewer, "dnsupdate", `{"Nameserver":"","TSIGKey":"","TSIGSecret":"","PropagationTimeout":"600"}`) {
+		t.Error("stored rfc2136 config not kept for dnsupdate")
+	}
+	if _, credentials := storedDNS(t, db); credentials != rfc2136 {
+		t.Fatalf("stored rfc2136 secrets overwritten: %q", credentials)
 	}
 
-	postSetDNS(t, renewer, "infoblox", `{"Host":"infoblox.example.com","Password":"secret","SSLVerify":true}`)
-	postSetDNS(t, renewer, "infoblox", `{"Host":"","Password":"","SSLVerify":false}`)
-	if _, credentials := storedDNS(t, db); credentials != `{"Host":"infoblox.example.com","Password":"secret","SSLVerify":false}` {
-		t.Fatalf("checkbox change not merged with the stored values: %q", credentials)
+	db.Write("acme", "example.com_dns_provider", "cloudflare")
+	db.Write("acme", "example.com_dns_credentials", "null")
+	const posted = `{"AuthToken":"","PropagationTimeout":"600"}`
+	if postSetDNS(t, renewer, "cloudflare", posted) {
+		t.Error("null stored config reported as kept")
+	}
+	if _, credentials := storedDNS(t, db); credentials != posted {
+		t.Fatalf("config not saved over a null stored config: %q", credentials)
 	}
 }

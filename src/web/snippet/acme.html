@@ -755,6 +755,13 @@
             if (callback != undefined){
               callback(false);
             }
+          } else if (response.kept) {
+            //Nothing was entered for the provider stored for this certificate
+            console.log("Stored DNS credentials kept");
+            parent.msgbox("Using the stored DNS credentials. Enter the credentials again to change the DNS settings", true, 8000);
+            if (callback != undefined){
+              callback(true);
+            }
           } else {
             console.log("Certificate DNS Credentials updated successfully");
             // Show success message
