@@ -163,16 +163,25 @@ func UpdateUptimeMonitorTargets() {
 
 // Generate uptime monitor targets from reverse proxy rules
 func GetUptimeTargetsFromReverseProxyRules(dp *dynamicproxy.Router) []*uptime.Target {
-	hosts := dp.GetProxyEndpointsAsMap()
+	return buildUptimeTargets(dp.GetProxyEndpointsAsMap())
+}
 
+// buildUptimeTargets converts a map of proxy endpoints (keyed by host id)
+// into uptime monitor targets. Each upstream origin of a host becomes one
+// target using that origin's TLS settings, and each enabled virtual directory
+// becomes exactly one target using the virtual directory's own TLS settings.
+func buildUptimeTargets(hosts map[string]*dynamicproxy.ProxyEndpoint) []*uptime.Target {
 	UptimeTargets := []*uptime.Target{}
 	for hostid, target := range hosts {
-		if target.Disabled || target.DisableUptimeMonitor {
+		if target == nil || target.Disabled || target.DisableUptimeMonitor {
 			//Skip those proxy rules that is disabled
 			continue
 		}
 		isMultipleUpstreams := len(target.ActiveOrigins) > 1
 		for i, origin := range target.ActiveOrigins {
+			if origin == nil {
+				continue
+			}
 			url := "http://" + origin.OriginIpOrDomain
 			protocol := "http"
 			if origin.RequireTLS {
@@ -194,27 +203,29 @@ func GetUptimeTargetsFromReverseProxyRules(dp *dynamicproxy.Router) []*uptime.Ta
 				SkipTlsValidation: origin.SkipCertValidations,
 				HealthCheckURI:    target.UptimeMonitorURI,
 			})
+		}
 
-			//Add each virtual directory into the list
-			for _, vdir := range target.VirtualDirectories {
-				url := "http://" + vdir.Domain
-				protocol := "http"
-				if origin.RequireTLS {
-					url = "https://" + vdir.Domain
-					protocol = "https"
-				}
-				//Add the root url
-				UptimeTargets = append(UptimeTargets, &uptime.Target{
-					ID:                hostid + vdir.MatchingPath,
-					Name:              hostid + vdir.MatchingPath,
-					URL:               url,
-					Protocol:          protocol,
-					ProxyType:         uptime.ProxyType_Vdir,
-					SkipTlsValidation: origin.SkipCertValidations,
-					HealthCheckURI:    target.UptimeMonitorURI,
-				})
-
+		//Add each virtual directory into the list once, using the
+		//virtual directory's own TLS settings instead of the upstream's
+		for _, vdir := range target.VirtualDirectories {
+			if vdir == nil || vdir.Disabled {
+				continue
 			}
+			url := "http://" + vdir.Domain
+			protocol := "http"
+			if vdir.RequireTLS {
+				url = "https://" + vdir.Domain
+				protocol = "https"
+			}
+			UptimeTargets = append(UptimeTargets, &uptime.Target{
+				ID:                hostid + vdir.MatchingPath,
+				Name:              hostid + vdir.MatchingPath,
+				URL:               url,
+				Protocol:          protocol,
+				ProxyType:         uptime.ProxyType_Vdir,
+				SkipTlsValidation: vdir.SkipCertValidations,
+				HealthCheckURI:    target.UptimeMonitorURI,
+			})
 		}
 	}
 
