@@ -96,3 +96,56 @@ func TestGetDnsChallengeProviderByName_NumericTimeouts(t *testing.T) {
 		t.Fatalf("numeric timeouts rejected: %v", err)
 	}
 }
+
+// syse requires a zone:password credential map that was hidden from the UI
+func TestGetDnsChallengeProviderByName_Syse(t *testing.T) {
+	structure, err := acmedns.GetProviderConfigStructure("syse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if structure["Credentials"] != "string" {
+		t.Fatalf("Credentials is not exposed to the UI: %v", structure)
+	}
+	creds := `{"Credentials":"example.com:password1,example.org:password2","PollingInterval":"2","PropagationTimeout":"600"}`
+	if _, err := GetDnsChallengeProviderByName("syse", creds, 600); err != nil {
+		t.Fatalf("unable to create syse provider: %v", err)
+	}
+	if _, err := GetDnsChallengeProviderByName("syse", `{"Credentials":"no-password-here"}`, 600); err == nil {
+		t.Fatal("expected an error for malformed credentials")
+	}
+}
+
+// yandex360 requires OrgID (int64), which the generator hid from the UI
+func TestGetDnsChallengeProviderByName_Yandex360(t *testing.T) {
+	structure, err := acmedns.GetProviderConfigStructure("yandex360")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if structure["OrgID"] != "int" {
+		t.Fatalf("OrgID is not exposed to the UI as int: %v", structure)
+	}
+	//The UI sends int fields as JSON numbers
+	creds := `{"OAuthToken":"token","OrgID":123456,"PollingInterval":"2","PropagationTimeout":"600"}`
+	if _, err := GetDnsChallengeProviderByName("yandex360", creds, 600); err != nil {
+		t.Fatalf("unable to create yandex360 provider: %v", err)
+	}
+}
+
+// Unexported lego fields cannot be set from JSON and must not be offered in
+// the UI, except the ones Zoraxy sets by hand
+func TestGetProviderConfigStructure_UnexportedFields(t *testing.T) {
+	ucloud, err := acmedns.GetProviderConfigStructure("ucloud")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ucloud["baseURL"]; ok {
+		t.Error("ucloud baseURL (unexported, test only) is still offered in the UI")
+	}
+	pleskFields, err := acmedns.GetProviderConfigStructure("plesk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pleskFields["baseURL"] != "string" {
+		t.Error("plesk baseURL must stay configurable")
+	}
+}

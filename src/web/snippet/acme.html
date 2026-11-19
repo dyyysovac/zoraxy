@@ -485,12 +485,18 @@
       }
     })
 
-    //Format hints for DNS provider fields that are not self explanatory
+    //Format hints for DNS provider fields that are not self explanatory, by provider
     const dnsConfigFieldPlaceholders = {
-      //selfhostde: TXT record IDs prepared in the selfhost.de panel, two IDs for wildcard domains
-      "RecordsMapping": "example.com:123:456,other.example.com:789",
-      //plesk: URL of the Plesk server
-      "baseURL": "https://plesk.example.com:8443"
+      //TXT record IDs prepared in the selfhost.de panel, two IDs for wildcard domains
+      "selfhostde": {"RecordsMapping": "example.com:123:456,other.example.com:789"},
+      //URL of the Plesk server
+      "plesk": {"baseURL": "https://plesk.example.com:8443"},
+      //zone:password pairs from the syse panel
+      "syse": {"Credentials": "example.com:password,example.org:password2"},
+    };
+    //Int fields that must be entered by the user instead of using a default value
+    const dnsConfigFieldsWithoutDefault = {
+      "yandex360": ["OrgID"],
     };
 
     //On DNS provider dropdown change
@@ -507,6 +513,8 @@
             let defaultValue = 10;
             if (key == "HTTPTimeout"){
               defaultValue = 300;
+            }else if ((dnsConfigFieldsWithoutDefault[newProviderName] || []).includes(key)){
+              defaultValue = "";
             }
             $("#dnsProviderAPIFields").append(`<div class="ui fluid labeled dnsConfigField input typeint" key="${key}" style="margin-top: 0.2em;">
               <div class="ui basic blue label" style="font-weight: 300;">
@@ -541,7 +549,7 @@
           
           }else{
             //Default to string
-            let placeholder = dnsConfigFieldPlaceholders[key] || "";
+            let placeholder = (dnsConfigFieldPlaceholders[newProviderName] || {})[key] || "";
             $("#dnsProviderAPIFields").append(`<div class="ui fluid labeled input dnsConfigField" key="${key}" style="margin-top: 0.2em;">
               <div class="ui basic label" style="font-weight: 300;">
                 ${key}

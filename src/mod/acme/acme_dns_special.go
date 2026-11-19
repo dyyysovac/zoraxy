@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/go-acme/lego/v5/challenge"
+	"github.com/go-acme/lego/v5/platform/env"
 	"github.com/go-acme/lego/v5/providers/dns/plesk"
 	"github.com/go-acme/lego/v5/providers/dns/selfhostde"
+	"github.com/go-acme/lego/v5/providers/dns/syse"
 )
 
 /*
@@ -26,6 +28,8 @@ import (
 	  from the PLESK_SERVER_BASE_URL environment variable (#1156)
 	- selfhostde: Config.RecordsMapping is a map[string]*selfhostde.Seq that
 	  has no JSON representation and was never shown in the UI (#1067)
+	- syse: the required Config.Credentials map[string]string was hidden from
+	  the UI and the UI can only send it as a string
 
 	The providers in this file are built by hand instead.
 */
@@ -39,6 +43,9 @@ func getSpecialDnsProvider(dnsProvider string, credentials map[string]any, propa
 		return provider, true, err
 	case "selfhostde":
 		provider, err := newSelfhostdeProvider(credentials, propagationTimeout, pollingInterval)
+		return provider, true, err
+	case "syse":
+		provider, err := newSyseProvider(credentials, propagationTimeout, pollingInterval)
 		return provider, true, err
 	}
 	return nil, false, nil
@@ -155,6 +162,26 @@ func newSelfhostdeProvider(credentials map[string]any, propagationTimeout int, p
 	cfg.PollingInterval = time.Duration(pollingInterval) * time.Second
 
 	return selfhostde.NewDNSProviderConfig(cfg)
+}
+
+// newSyseProvider creates the syse provider from the "zone:password,..."
+// credential list entered in the UI (same format as SYSE_CREDENTIALS)
+func newSyseProvider(credentials map[string]any, propagationTimeout int, pollingInterval int) (challenge.Provider, error) {
+	raw := credentialString(credentials, "Credentials")
+	if raw == "" {
+		return nil, errors.New("syse: missing credentials, expected zone:password[,zone:password] (see https://go-acme.github.io/lego/dns/syse/)")
+	}
+	pairs, err := env.ParsePairs(raw)
+	if err != nil {
+		return nil, fmt.Errorf("syse: invalid Credentials: %w", err)
+	}
+
+	cfg := syse.NewDefaultConfig()
+	cfg.Credentials = pairs
+	cfg.PropagationTimeout = time.Duration(propagationTimeout) * time.Second
+	cfg.PollingInterval = time.Duration(pollingInterval) * time.Second
+
+	return syse.NewDNSProviderConfig(cfg)
 }
 
 // parseSelfhostdeRecordsMapping parses the selfhost.de record mapping in the

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"unicode"
 
 	"imuslab.com/zoraxy/mod/utils"
 )
@@ -40,6 +41,12 @@ func GetProviderConfigStructure(providerName string) (map[string]string, error) 
 
 	results := map[string]string{}
 	for _, field := range targetConfigTemplate.ConfigableFields {
+		if field.Title != "" && unicode.IsLower(rune(field.Title[0])) {
+			// Unexported lego config field (e.g. ucloud baseURL). JSON cannot set
+			// it, so a value entered in the UI would be dropped silently. Fields
+			// Zoraxy sets by hand are added back below from extraConfigurableFields
+			continue
+		}
 		results[field.Title] = field.Datatype
 	}
 
@@ -52,12 +59,19 @@ func GetProviderConfigStructure(providerName string) (map[string]string, error) 
 }
 
 // extraConfigurableFields lists the settings that the code generator skips
-// because the lego config type has no JSON representation, but that are
-// required to use the provider. They are turned into the lego config by
-// hand in mod/acme/acme_dns_special.go
+// or that cannot be set by unmarshalling JSON into the lego config, but that
+// are required to use the provider. Unless noted otherwise they are turned
+// into the lego config by hand in mod/acme/acme_dns_special.go
 var extraConfigurableFields = map[string]map[string]string{
+	// unexported Config.baseURL, passed via PLESK_SERVER_BASE_URL (#1156)
+	"plesk": {"baseURL": "string"},
 	// map[string]*selfhostde.Seq, entered as "domain:recordID[:recordID],..." (#1067)
 	"selfhostde": {"RecordsMapping": "string"},
+	// map[string]string, entered as "zone:password,..." like SYSE_CREDENTIALS
+	"syse": {"Credentials": "string"},
+	// required int64 the generator hides. A JSON number unmarshals into it,
+	// so the generic path works once the field is shown
+	"yandex360": {"OrgID": "int"},
 }
 
 // HandleServeProvidersJson return the list of supported providers as json
