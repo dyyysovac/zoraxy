@@ -545,6 +545,56 @@ func (router *Router) handleCaptchaGating(w http.ResponseWriter, r *http.Request
 	return true, true
 }
 
+// secondaryPortHandler returns the handler of a secondary listening port
+func (router *Router) secondaryPortHandler(addr string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Special routing rules (e.g. the ACME HTTP-01 challenge responder)
+		// go first, as on the main and port 80 listeners (#1342)
+		if matchedRoutingRule := router.GetMatchingRoutingRule(r); matchedRoutingRule != nil {
+			matchedRoutingRule.Route(w, r)
+			return
+		}
+
+		// Extract domain from request
+		domainOnly := r.Host
+		if strings.Contains(r.Host, ":") {
+			hostPath := strings.Split(r.Host, ":")
+			domainOnly = hostPath[0]
+		}
+
+		// Get the proxy endpoint for this domain
+		sep := router.GetProxyEndpointFromHostname(domainOnly)
+
+		// Check if this domain has this port in its listening ports
+		if sep != nil && router.isDomainListeningOnPort(sep, addr) {
+			// Handle the request through the common handler
+			router.handleNonTLSRequest(w, r, sep)
+			return
+		}
+
+		// No matching proxy rule for this domain+port combination
+		// Use default site behavior
+		// TODO: Make this behave like the primary listening port
+		if router.Root.DefaultSiteOption == DefaultSite_NoResponse {
+			// No response. Just close the connection
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				w.Header().Set("Connection", "close")
+				return
+			}
+			conn, _, err := hijacker.Hijack()
+			if err != nil {
+				w.Header().Set("Connection", "close")
+				return
+			}
+			conn.Close()
+		} else {
+			// Default behavior - return 404
+			http.NotFound(w, r)
+		}
+	})
+}
+
 // startSecondaryListeners starts HTTP servers on secondary listening ports defined in proxy endpoints
 func (router *Router) startSecondaryListeners() {
 	commonPorts := router.GetCommonListeningPorts()
@@ -563,46 +613,8 @@ func (router *Router) startSecondaryListeners() {
 
 		// Create HTTP server for this secondary port
 		secondaryServer := &http.Server{
-			Addr: addr,
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Extract domain from request
-				domainOnly := r.Host
-				if strings.Contains(r.Host, ":") {
-					hostPath := strings.Split(r.Host, ":")
-					domainOnly = hostPath[0]
-				}
-
-				// Get the proxy endpoint for this domain
-				sep := router.GetProxyEndpointFromHostname(domainOnly)
-
-				// Check if this domain has this port in its listening ports
-				if sep != nil && router.isDomainListeningOnPort(sep, addr) {
-					// Handle the request through the common handler
-					router.handleNonTLSRequest(w, r, sep)
-					return
-				}
-
-				// No matching proxy rule for this domain+port combination
-				// Use default site behavior
-				// TODO: Make this behave like the primary listening port
-				if router.Root.DefaultSiteOption == DefaultSite_NoResponse {
-					// No response. Just close the connection
-					hijacker, ok := w.(http.Hijacker)
-					if !ok {
-						w.Header().Set("Connection", "close")
-						return
-					}
-					conn, _, err := hijacker.Hijack()
-					if err != nil {
-						w.Header().Set("Connection", "close")
-						return
-					}
-					conn.Close()
-				} else {
-					// Default behavior - return 404
-					http.NotFound(w, r)
-				}
-			}),
+			Addr:              addr,
+			Handler:           router.secondaryPortHandler(addr),
 			ReadHeaderTimeout: time.Duration(router.Option.ReadHeaderTimeout) * time.Second,
 			WriteTimeout:      time.Duration(router.Option.WriteTimeout) * time.Second,
 			IdleTimeout:       time.Duration(router.Option.IdleTimeout) * time.Second,

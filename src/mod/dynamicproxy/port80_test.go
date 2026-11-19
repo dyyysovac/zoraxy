@@ -99,3 +99,19 @@ func TestPort80Handler_NonMatchingRequestStillRedirects(t *testing.T) {
 		t.Errorf("unexpected redirect target %q", loc)
 	}
 }
+
+// Secondary listening ports must consult the special routing rules too,
+// otherwise the ACME challenge is proxied to the backend there (#1342)
+func TestSecondaryPortHandler_RoutingRuleFirst(t *testing.T) {
+	router, hit := newTestPort80Router(true, false)
+	ep, _ := router.ProxyEndpoints.Load("plain.example.com")
+	ep.(*ProxyEndpoint).ListeningPorts = []string{":8080"}
+
+	w := httptest.NewRecorder()
+	r := newTestPort80Request("/.well-known/acme-challenge/token123")
+	router.secondaryPortHandler(":8080").ServeHTTP(w, r)
+
+	if !*hit {
+		t.Fatal("ACME routing rule was not consulted on a secondary listening port")
+	}
+}
