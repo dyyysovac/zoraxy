@@ -1333,20 +1333,22 @@
             }
         }
         
+        //Ignore more clicks while the existing certificate is checked
+        if (btn != undefined){
+            if ($(btn).data("certRequestPending")){
+                return;
+            }
+            $(btn).data("certRequestPending", true).addClass("disabled");
+        }
+
         //The certificate is named after the root domain. If it already exists and
         //covers more domains (e.g. a wildcard added in the ACME tool, or an alias
         //removed from this host), ask whether to keep them
-        let certFilename = RootAndAliasDomains[0];
-        $.get("/api/cert/list?date=true", function(certList){
-            let exactDomains = false;
-            let existingCert = Array.isArray(certList)?certList.find(c => c.Filename == certFilename):undefined;
-            if (existingCert != undefined && Array.isArray(existingCert.Domains)){
-                let extraDomains = existingCert.Domains.filter(d => !RootAndAliasDomains.includes(d));
-                if (extraDomains.length > 0){
-                    exactDomains = confirm("The existing certificate " + certFilename + " also covers:\n\n" + extraDomains.join("\n") + "\n\nThese are not domains of this host. Remove them from the new certificate?\n\nOK: remove them\nCancel: keep them in the new certificate");
-                }
+        askToRemoveExtraCertDomains(RootAndAliasDomains[0], RootAndAliasDomains, function(exactDomains){
+            if (btn != undefined){
+                //renewCertificate disables the button itself while requesting
+                $(btn).data("certRequestPending", false).removeClass("disabled");
             }
-
             //Renew the certificate
             //No challenge type given, so a certificate obtained with DNS-01 stays on DNS-01
             renewCertificate(renewDomainKey, undefined, btn, undefined, exactDomains);

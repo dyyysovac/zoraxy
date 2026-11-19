@@ -813,44 +813,54 @@
       var disableRecursiveNss = $("#disableRecursiveNssCheckbox")[0].checked;
       var disableAuthoritativeNss = $("#disableAuthoritativeNssCheckbox")[0].checked;
 
-      $.ajax({
-        url: "/api/acme/obtainCert",
-        method: "GET",
-        data: {
-          domains: domains,
-          filename: filename,
-          email: email,
-          ca: ca,
-          caURL: caURL,
-          skipTLS: skipTLSValue,
-          dns: dns,
-          dnsServers: dnsServers,
-          disable_recursive_nss_check: disableRecursiveNss,
-          disable_authoritative_nss_check: disableAuthoritativeNss
-        },
-        success: function(response) {
-          $("#obtainButton").removeClass("loading").removeClass("disabled");
-          if (response.error) {
-            console.log("Error:", response.error);
-            // Show error message
-            parent.msgbox(response.error, false, 12000);
-            if (callback != undefined){callback(false);}
-          } else {
-            console.log("Certificate renewed successfully");
-            // Show success message
-            parent.msgbox("Certificate renewed successfully");
-            // Renew the parent certificate list
-            parent.initManagedDomainCertificateList();
+      //If the certificate already exists and covers domains that are not entered
+      //here, ask whether to keep them (see askToRemoveExtraCertDomains in cert.html)
+      let requestCertificate = function(exactDomains){
+        $.ajax({
+          url: "/api/acme/obtainCert",
+          method: "GET",
+          data: {
+            domains: domains,
+            filename: filename,
+            email: email,
+            ca: ca,
+            caURL: caURL,
+            skipTLS: skipTLSValue,
+            dns: dns,
+            dnsServers: dnsServers,
+            disable_recursive_nss_check: disableRecursiveNss,
+            disable_authoritative_nss_check: disableAuthoritativeNss,
+            exactDomains: exactDomains,
+          },
+          success: function(response) {
+            $("#obtainButton").removeClass("loading").removeClass("disabled");
+            if (response.error) {
+              console.log("Error:", response.error);
+              // Show error message
+              parent.msgbox(response.error, false, 12000);
+              if (callback != undefined){callback(false);}
+            } else {
+              console.log("Certificate renewed successfully");
+              // Show success message
+              parent.msgbox("Certificate renewed successfully");
+              // Renew the parent certificate list
+              parent.initManagedDomainCertificateList();
 
-            if (callback != undefined){callback(true);}
+              if (callback != undefined){callback(true);}
+            }
+          },
+          error: function(error) {
+            $("#obtainButton").removeClass("loading").removeClass("disabled");
+            console.log("Failed to renewed certificate:", error);
+            if (callback != undefined){callback(false);}
           }
-        },
-        error: function(error) {
-          $("#obtainButton").removeClass("loading").removeClass("disabled");
-          console.log("Failed to renewed certificate:", error);
-          if (callback != undefined){callback(false);}
-        }
-      });
+        });
+      };
+      if (typeof(parent.askToRemoveExtraCertDomains) == "function"){
+        parent.askToRemoveExtraCertDomains(filename, domains.split(","), requestCertificate);
+      }else{
+        requestCertificate(false);
+      }
     }
 
     //Check if the entered domain contains multiple domains

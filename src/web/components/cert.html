@@ -168,6 +168,30 @@
     }
 
     //Renew certificate by button press
+    //When a request replaces the existing certificate certFilename and that
+    //certificate covers domains that are not requested (e.g. a wildcard added in
+    //the ACME tool, or an alias removed from the host), ask whether to remove
+    //them. callback(exactDomains) is called with true to request exactly the
+    //given domains, false to keep the other domains in the new certificate
+    function askToRemoveExtraCertDomains(certFilename, requestedDomains, callback){
+        certFilename = certFilename.replace(/\*/g, "_");
+        let requested = requestedDomains.map(d => d.trim().toLowerCase()).filter(d => d != "");
+        $.get("/api/cert/list?date=true", function(certList){
+            let exactDomains = false;
+            let existingCert = Array.isArray(certList)?certList.find(c => c.Filename == certFilename):undefined;
+            if (existingCert != undefined && Array.isArray(existingCert.Domains)){
+                let extraDomains = existingCert.Domains.filter(d => !requested.includes(d.toLowerCase()));
+                if (extraDomains.length > 0){
+                    exactDomains = confirm("The existing certificate " + certFilename + " also covers:\n\n" + extraDomains.join("\n") + "\n\nThese domains are not in this request. Remove them from the new certificate?\n\nOK: remove them\nCancel: keep them in the new certificate");
+                }
+            }
+            callback(exactDomains);
+        }).fail(function(){
+            //Unable to check, keep the other domains (the default)
+            callback(false);
+        });
+    }
+
     //dns can be left undefined to use the challenge type stored for the certificate.
     //filename is the name of the certificate to replace, by default it is
     //derived from the domains. Other domains of the replaced certificate are
