@@ -87,7 +87,7 @@ func TestHandleRateLimit_BareHeaderIPStillCounts(t *testing.T) {
 			if blocked == 0 {
 				t.Fatalf("%s: rate limit never fired, limiter failed open", headerName)
 			}
-			if got := router.rateLimitCounter.GetCount("203.0.113.99"); got != 10 {
+			if got := router.rateLimitCounter.GetCount(rateLimitCounterKey(pe, "203.0.113.99")); got != 10 {
 				t.Errorf("%s: expected 10 requests counted against 203.0.113.99, got %d", headerName, got)
 			}
 		})
@@ -139,7 +139,7 @@ func TestHandleRateLimit_SpoofedHeaderFromUntrustedPeerIgnored(t *testing.T) {
 	if blocked == 0 {
 		t.Fatal("spoofed CF-Connecting-IP allowed a client to bypass the rate limit")
 	}
-	if got := router.rateLimitCounter.GetCount("198.51.100.7"); got != 10 {
+	if got := router.rateLimitCounter.GetCount(rateLimitCounterKey(pe, "198.51.100.7")); got != 10 {
 		t.Errorf("expected all 10 requests counted against the real peer, got %d", got)
 	}
 }
@@ -161,5 +161,42 @@ func TestHandleRateLimit_DirectConnection(t *testing.T) {
 
 	if blocked != 8 {
 		t.Errorf("expected 8 of 10 requests blocked at limit 3, got %d", blocked)
+	}
+}
+
+// Each proxy rule must enforce its own limit. Requests to one rule must not
+// count against the limit of another rule (#1107)
+func TestHandleRateLimit_CountsPerProxyRule(t *testing.T) {
+	router := newTestRateLimitRouter(t, false)
+	busySite := &ProxyEndpoint{RootOrMatchingDomain: "busy.example.com", RequireRateLimit: true, RateLimit: 100}
+	quietSite := &ProxyEndpoint{RootOrMatchingDomain: "quiet.example.com", RequireRateLimit: true, RateLimit: 3}
+
+	//Heavy but allowed traffic to the first site
+	for i := 0; i < 50; i++ {
+		w := httptest.NewRecorder()
+		r := newTestRequest("198.51.100.30:40000", nil)
+		if err := router.handleRateLimit(w, r, busySite); err != nil {
+			t.Fatalf("busy site blocked at request %d below its limit", i)
+		}
+	}
+
+	//The same client must still be able to use the second site
+	w := httptest.NewRecorder()
+	r := newTestRequest("198.51.100.30:40000", nil)
+	if err := router.handleRateLimit(w, r, quietSite); err != nil {
+		t.Fatal("traffic to another proxy rule counted against this rule's rate limit")
+	}
+
+	//And the second site still enforces its own, lower limit
+	blocked := 0
+	for i := 0; i < 5; i++ {
+		w := httptest.NewRecorder()
+		r := newTestRequest("198.51.100.30:40000", nil)
+		if err := router.handleRateLimit(w, r, quietSite); err != nil {
+			blocked++
+		}
+	}
+	if blocked == 0 {
+		t.Fatal("quiet site did not enforce its own rate limit")
 	}
 }

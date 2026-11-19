@@ -64,9 +64,12 @@ func (router *Router) handleRateLimit(w http.ResponseWriter, r *http.Request, pe
 		return nil
 	}
 
-	router.rateLimitCounter.Increment(ip)
+	//Count per proxy rule and client, so each rule enforces its own limit
+	//instead of all rules sharing one counter per IP (#1107)
+	counterKey := rateLimitCounterKey(pe, ip)
+	router.rateLimitCounter.Increment(counterKey)
 
-	if router.rateLimitCounter.Exceeded(ip, int64(pe.RateLimit)) {
+	if router.rateLimitCounter.Exceeded(counterKey, int64(pe.RateLimit)) {
 		w.WriteHeader(429)
 		return errors.New("rate limit exceeded")
 	}
@@ -74,6 +77,15 @@ func (router *Router) handleRateLimit(w http.ResponseWriter, r *http.Request, pe
 	// log.Println("Rate limit check", ip, ipTable.GetCount(ip))
 
 	return nil
+}
+
+// rateLimitCounterKey returns the rate limit counter key of a client IP on
+// the given proxy rule
+func rateLimitCounterKey(pe *ProxyEndpoint, ip string) string {
+	if pe == nil {
+		return ip
+	}
+	return pe.RootOrMatchingDomain + "|" + ip
 }
 
 // Start the ticker routine for reseting the rate limit counter every seconds
