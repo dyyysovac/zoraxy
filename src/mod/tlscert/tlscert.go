@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"imuslab.com/zoraxy/mod/info/logger"
 	"imuslab.com/zoraxy/mod/utils"
@@ -200,13 +201,35 @@ func (m *Manager) CertMatchExists(serverName string) bool {
 
 // Get cert entry by matching server name, return pubKey and priKey if found
 // check with CertMatchExists before calling to the load function
+// If more than one loaded certificate covers the server name (e.g. an old
+// multi-domain cert and a newly issued one), prefer the currently valid cert
+// with the latest expiry date. If none of them is valid, use the first match
 func (m *Manager) GetCertByX509CNHostname(serverName string) (string, string) {
+	var firstMatch *CertCache
+	var bestValidMatch *CertCache
+	now := time.Now()
 	for _, certCacheEntry := range m.LoadedCerts {
 		if certCacheEntry.Cert.VerifyHostname(serverName) == nil || certCacheEntry.Cert.Issuer.CommonName == serverName {
-			return certCacheEntry.PubKey, certCacheEntry.PriKey
+			if firstMatch == nil {
+				firstMatch = certCacheEntry
+			}
+
+			//VerifyHostname does not check the validity period, check it here
+			if now.Before(certCacheEntry.Cert.NotBefore) || now.After(certCacheEntry.Cert.NotAfter) {
+				continue
+			}
+			if bestValidMatch == nil || certCacheEntry.Cert.NotAfter.After(bestValidMatch.Cert.NotAfter) {
+				bestValidMatch = certCacheEntry
+			}
 		}
 	}
 
+	if bestValidMatch != nil {
+		return bestValidMatch.PubKey, bestValidMatch.PriKey
+	}
+	if firstMatch != nil {
+		return firstMatch.PubKey, firstMatch.PriKey
+	}
 	return "", ""
 }
 

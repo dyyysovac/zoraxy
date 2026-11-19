@@ -2,11 +2,13 @@ package tlscert
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
 // This remove the certificates in the list where either the
-// public key or the private key is missing
+// public key or the private key is missing. The result is sorted
+// so the loaded certificate list keeps the same order on every reload
 func getCertPairs(certFiles []string) []string {
 	pemMap := make(map[string]bool)
 	keyMap := make(map[string]bool)
@@ -26,6 +28,7 @@ func getCertPairs(certFiles []string) []string {
 		}
 	}
 
+	sort.Strings(result)
 	return result
 }
 

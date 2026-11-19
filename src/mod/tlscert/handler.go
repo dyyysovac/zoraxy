@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -201,6 +202,9 @@ func (m *Manager) HandleListDomains(w http.ResponseWriter, r *http.Request) {
 	}
 
 	certnameToDomainMap := map[string]string{}
+	//Compact result is built per cert file, so a cert whose domains are all
+	//covered by another cert file still shows up in the list
+	certnameToDomainsMap := map[string][]string{}
 	for _, filename := range filenames {
 		if filename.IsDir() {
 			continue
@@ -223,6 +227,21 @@ func (m *Manager) HandleListDomains(w http.ResponseWriter, r *http.Request) {
 						certnameToDomainMap[dnsName] = certname
 					}
 					certnameToDomainMap[cert.Subject.CommonName] = certname
+
+					certDomains, ok := certnameToDomainsMap[certname]
+					if !ok {
+						certDomains = []string{}
+					}
+					for _, dnsName := range cert.DNSNames {
+						if !slices.Contains(certDomains, dnsName) {
+							certDomains = append(certDomains, dnsName)
+						}
+					}
+					//Only add the CN if it is not empty (lego v5 certs have no CN)
+					if cert.Subject.CommonName != "" && !slices.Contains(certDomains, cert.Subject.CommonName) {
+						certDomains = append(certDomains, cert.Subject.CommonName)
+					}
+					certnameToDomainsMap[certname] = certDomains
 				}
 			}
 		}
@@ -230,17 +249,7 @@ func (m *Manager) HandleListDomains(w http.ResponseWriter, r *http.Request) {
 
 	requireCompact, _ := utils.GetBool(r, "compact")
 	if requireCompact {
-		result := make(map[string][]string)
-
-		for key, value := range certnameToDomainMap {
-			if _, ok := result[value]; !ok {
-				result[value] = make([]string, 0)
-			}
-
-			result[value] = append(result[value], key)
-		}
-
-		js, _ := json.Marshal(result)
+		js, _ := json.Marshal(certnameToDomainsMap)
 		utils.SendJSONResponse(w, string(js))
 		return
 	}
