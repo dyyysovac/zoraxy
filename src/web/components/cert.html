@@ -168,7 +168,10 @@
     }
 
     //Renew certificate by button press
-    function renewCertificate(domain, dns, btn=undefined){
+    //dns can be left undefined to use the challenge type stored for the certificate.
+    //filename is the name of the certificate to replace, by default it is
+    //derived from the domains
+    function renewCertificate(domain, dns, btn=undefined, filename=undefined){
         let defaultCA = $("#defaultCA").dropdown("get value");
         if (defaultCA.trim() == ""){
             defaultCA = "Let's Encrypt";
@@ -212,7 +215,7 @@
                     initManagedDomainCertificateList();
                 }, 3000);
             }
-        });
+        }, filename);
     }
 
     /*
@@ -220,7 +223,7 @@
     */
 
    // Obtain certificate from API, only support one domain
-   function obtainCertificate(domains, dns, usingCa = "Let's Encrypt", callback=undefined) {
+   function obtainCertificate(domains, dns, usingCa = "Let's Encrypt", callback=undefined, certFilename=undefined) {
         //Drop spaces and empty entries, e.g. from a trailing comma or an empty alias
         domains = domains.split(",").map(d => d.trim()).filter(d => d != "").join(",");
         //Load the ACME email from server side
@@ -239,7 +242,10 @@
                 }
                 return;
             }
-            if (filename.trim() == "" && !domains.includes(",")){
+            if (certFilename != undefined && certFilename.trim() != ""){
+                //Renewing an existing certificate, keep its filename
+                filename = certFilename.trim();
+            }else if (filename.trim() == "" && !domains.includes(",")){
                 //Zoraxy filename are the matching name for domains.
                 //Use the same as domains
                 filename = domains;
@@ -353,9 +359,15 @@
                 });
                 data.forEach(entry => {
                     let isExpired = entry.RemainingDays <= 0;
+                    //Renew all domains of the certificate. The filename is only a
+                    //fallback for certificates without SANs, it does not have to
+                    //be a domain (e.g. certificates named in the ACME tool)
                     let entryDomainRenewKey = entry.Filename; 
                     if (entryDomainRenewKey.includes("_.")){
                         entryDomainRenewKey = entryDomainRenewKey.replace("_.","*.");
+                    }
+                    if (entry.Domains != undefined && entry.Domains != null && entry.Domains.length > 0){
+                        entryDomainRenewKey = entry.Domains.join(",");
                     }
                     $("#certifiedDomainList").append(`<tr>
                         <td><a style="cursor: pointer;" title="Download certificate" onclick="handleCertDownload('${entry.Filename}');">${entry.Domain}</a></td>
@@ -366,7 +378,7 @@
                         <td><i class="${entry.UseDNS?"green check": "red times"} icon"></i></td>
                         <td>
                             <button title="Set as Default / Fallback Certificate" class="ui mini basic button ${(entry.IsFallback?"disabled":"")} " onclick="setSelectedCertAsFallbackCertificate('${entry.Filename}');"><i class="ui blue home icon"></i> Set Fallback</button>
-                            <button title="Renew Certificate" class="ui mini basic icon button renewButton" onclick="renewCertificate('${entryDomainRenewKey}', '${entry.UseDNS}', this);"><i class="ui green refresh icon"></i></button>
+                            <button title="Renew Certificate" class="ui mini basic icon button renewButton" onclick="renewCertificate('${entryDomainRenewKey}', '${entry.UseDNS}', this, '${entry.Filename}');"><i class="ui green refresh icon"></i></button>
                             <button title="Delete key-pair" class="ui mini basic icon red button" onclick="deleteCertificate('${entry.Filename}');"><i class="ui red trash icon"></i></button>
                         </td>
                     </tr>`);

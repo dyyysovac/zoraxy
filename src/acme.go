@@ -172,8 +172,7 @@ func acmeDeregisterSpecialRoutingRule() {
 // This function check if the renew setup is satisfied. If not, toggle them automatically
 func AcmeCheckAndHandleRenewCertificate(w http.ResponseWriter, r *http.Request) {
 	requireRestoreHttpsRedirect := false
-	dnsPara, _ := utils.PostBool(r, "dns")
-	if !dnsPara {
+	if !acme.RequestUsesDNSChallenge(r) {
 		// HTTP-01 challenge
 		switch dynamicProxyRouter.Option.Port {
 		case 443:

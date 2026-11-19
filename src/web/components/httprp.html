@@ -1334,7 +1334,8 @@
         }
         
         //Renew the certificate
-        renewCertificate(renewDomainKey, false, btn);
+        //No challenge type given, so a certificate obtained with DNS-01 stays on DNS-01
+        renewCertificate(renewDomainKey, undefined, btn);
     }
 
     function generateSelfSignedCertificate(uuid, domains, btn=undefined){

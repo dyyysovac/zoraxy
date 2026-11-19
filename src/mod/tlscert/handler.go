@@ -260,8 +260,9 @@ func (m *Manager) HandleListCertificate(w http.ResponseWriter, r *http.Request) 
 	showDate, _ := utils.GetBool(r, "date")
 	if showDate {
 		type CertInfo struct {
-			Domain           string // Domain name of the certificate
-			Filename         string // Filename that stores the certificate
+			Domain           string   // Domain name of the certificate
+			Domains          []string // Domains (SANs) covered by the certificate
+			Filename         string   // Filename that stores the certificate
 			LastModifiedDate string
 			ExpireDate       string
 			RemainingDays    int
@@ -310,16 +311,19 @@ func (m *Manager) HandleListCertificate(w http.ResponseWriter, r *http.Request) 
 			}
 
 			certDomain := ""
+			certDomains := []string{}
 			block, _ := pem.Decode(certBtyes)
 			if block != nil {
 				cert, err := x509.ParseCertificate(block.Bytes)
 				if err == nil {
 					certDomain = cert.Subject.CommonName
+					certDomains = cert.DNSNames
 				}
 			}
 
 			thisCertInfo := CertInfo{
 				Domain:           certDomain,
+				Domains:          certDomains,
 				Filename:         filename,
 				LastModifiedDate: modifiedTime,
 				ExpireDate:       certExpireTime,

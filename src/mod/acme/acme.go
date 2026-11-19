@@ -200,9 +200,9 @@ func (a *ACMEHandler) ObtainCert(domains []string, certificateName string, email
 	}
 
 	// Load certificate info from JSON file
+	// The challenge type is chosen by the caller, see RequestUsesDNSChallenge
 	certInfo, err := LoadCertInfoJSON(fmt.Sprintf("./conf/certs/%s.json", certificateName))
 	if err == nil {
-		useDNS = certInfo.UseDNS
 		if dnsServers == "" && certInfo.DNSServers != nil && len(certInfo.DNSServers) > 0 {
 			dnsServers = strings.Join(certInfo.DNSServers, ",")
 		}
@@ -541,8 +541,6 @@ func contains(slice []string, str string) bool {
 	return false
 }
 
-// mergeDomainsKeepOrder returns the unique domains of both lists, keeping the
-// order of the first list followed by the domains only found in the second
 // parseDomainList splits a comma separated domain list and normalizes each
 // domain. Empty entries, e.g. from a trailing comma or an empty alias, are
 // skipped
@@ -564,19 +562,27 @@ func parseDomainList(domainList string) ([]string, error) {
 	return domains, nil
 }
 
-func mergeDomainsKeepOrder(primary []string, extra []string) []string {
-	merged := make([]string, 0, len(primary)+len(extra))
-	seen := map[string]struct{}{}
-	for _, list := range [][]string{primary, extra} {
-		for _, d := range list {
-			if _, ok := seen[d]; ok {
-				continue
-			}
-			seen[d] = struct{}{}
-			merged = append(merged, d)
-		}
+// RequestUsesDNSChallenge returns whether the certificate request r uses the
+// DNS-01 challenge: the dns parameter if it is given, otherwise the challenge
+// type stored for the certificate. So the host editor, which does not send
+// it, keeps a certificate that was obtained with DNS-01 on DNS-01, while an
+// explicit choice (e.g. DNS-01 for a wildcard in the ACME tool) is used
+// instead of the stored one
+func RequestUsesDNSChallenge(r *http.Request) bool {
+	if dnsPara, err := utils.PostPara(r, "dns"); err == nil && strings.TrimSpace(dnsPara) != "" {
+		useDNS, _ := utils.PostBool(r, "dns")
+		return useDNS
 	}
-	return merged
+	filename, err := utils.PostPara(r, "filename")
+	if err != nil {
+		return false
+	}
+	filename = strings.ReplaceAll(filename, "*", "_")
+	certInfo, err := LoadCertInfoJSON(fmt.Sprintf("./conf/certs/%s.json", filename))
+	if err != nil {
+		return false
+	}
+	return certInfo.UseDNS
 }
 
 // HandleGetExpiredDomains handles the HTTP GET request to retrieve the list of expired domains.
@@ -653,7 +659,7 @@ func (a *ACMEHandler) HandleRenewCertificate(w http.ResponseWriter, r *http.Requ
 	}
 
 	skipTLS, _ := utils.PostBool(r, "skipTLS")
-	dns, _ := utils.PostBool(r, "dns")
+	dns := RequestUsesDNSChallenge(r)
 
 	// Default propagation timeout is 600 seconds (10 minutes)
 	propagationTimeout := 600
@@ -672,18 +678,10 @@ func (a *ACMEHandler) HandleRenewCertificate(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// Extract SANs from existing PEM to ensure all domains are included
-	pemPath := fmt.Sprintf("./conf/certs/%s.pem", filename)
-	sanDomains, err := ExtractDomainsFromPEM(pemPath)
-	if err == nil {
-		// Merge domainPara + SANs. Keep the requested domains first and in
-		// order, the first domain becomes the CN of the new certificate
-		cleanedDomains = mergeDomainsKeepOrder(cleanedDomains, sanDomains)
-
-		a.Logf("Renewal domains including SANs from PEM: "+strings.Join(cleanedDomains, ","), nil)
-	} else {
-		a.Logf("Could not extract SANs from PEM, using domainPara only", err)
-	}
+	// The certificate gets exactly the requested domains. The SANs of the
+	// existing certificate are not added back: the certificate list sends
+	// them itself when renewing, and adding them made a removed alias come
+	// back on every request, failing it once its DNS moved away
 
 	// Extract DNS servers from the request
 	var dnsServers []string

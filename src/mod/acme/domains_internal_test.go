@@ -1,26 +1,11 @@
 package acme
 
 import (
+	"net/http/httptest"
+	"os"
 	"reflect"
 	"testing"
 )
-
-// The requested domains must stay first and in order when the SANs of an
-// existing certificate are merged in, the first domain becomes the CN
-func TestMergeDomainsKeepOrder(t *testing.T) {
-	got := mergeDomainsKeepOrder(
-		[]string{"example.com", "www.example.com", "alias.example.net"},
-		[]string{"www.example.com", "old.example.com", "example.com"},
-	)
-	want := []string{"example.com", "www.example.com", "alias.example.net", "old.example.com"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-
-	if got := mergeDomainsKeepOrder([]string{"a.com", "a.com"}, nil); !reflect.DeepEqual(got, []string{"a.com"}) {
-		t.Fatalf("duplicates in the primary list not removed: %v", got)
-	}
-}
 
 // An empty entry (trailing comma, empty alias) used to fail the whole request
 // with "domain is empty"
@@ -45,6 +30,41 @@ func TestParseDomainList(t *testing.T) {
 	for _, input := range []string{",", " , ", ""} {
 		if _, err := parseDomainList(input); err == nil {
 			t.Errorf("%q: expected an error", input)
+		}
+	}
+}
+
+// An explicit challenge type (e.g. DNS-01 for a wildcard in the ACME tool)
+// must win over the one stored for the certificate, a request without one
+// keeps the stored type
+func TestRequestUsesDNSChallenge(t *testing.T) {
+	workdir := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workdir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(previous)
+	os.MkdirAll("conf/certs", 0o755)
+	os.WriteFile("conf/certs/dns.example.com.json", []byte(`{"dns":true}`), 0o644)
+	os.WriteFile("conf/certs/http.example.com.json", []byte(`{"dns":false}`), 0o644)
+
+	for query, want := range map[string]bool{
+		"filename=dns.example.com":              true,
+		"filename=dns.example.com&dns=":         true,
+		"filename=dns.example.com&dns=false":    false,
+		"filename=http.example.com":             false,
+		"filename=http.example.com&dns=true":    true,
+		"filename=_.http.example.com&dns=true":  true,
+		"filename=missing.example.com":          false,
+		"filename=missing.example.com&dns=true": true,
+		"domains=a.com":                         false,
+	} {
+		r := httptest.NewRequest("GET", "/api/acme/obtainCert?"+query, nil)
+		if got := RequestUsesDNSChallenge(r); got != want {
+			t.Errorf("%s: got %v, want %v", query, got, want)
 		}
 	}
 }
