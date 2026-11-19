@@ -19,14 +19,15 @@ func (t *RequestCountPerIpTable) Increment(ip string) {
 	atomic.AddInt64(v.(*int64), 1)
 }
 
-// Check if the IP is in the table and if it is, check if the count is less than the limit
+// Check if the IP is in the table and if it is, check if the count is over the limit.
+// The count includes the current request, so a limit of N allows N requests per window
 func (t *RequestCountPerIpTable) Exceeded(ip string, limit int64) bool {
 	v, ok := t.table.Load(ip)
 	if !ok {
 		return false
 	}
 	count := atomic.LoadInt64(v.(*int64))
-	return count >= limit
+	return count > limit
 }
 
 // Get the count of requests for a given IP
@@ -55,6 +56,12 @@ func (h *ProxyHandler) handleRateLimitRouting(w http.ResponseWriter, r *http.Req
 }
 
 func (router *Router) handleRateLimit(w http.ResponseWriter, r *http.Request, pe *ProxyEndpoint) error {
+	if pe.RateLimit <= 0 {
+		//No usable limit set (e.g. 0 from a hand edited config file). Treat as
+		//no limit instead of blocking every request
+		return nil
+	}
+
 	//Resolve the client IP using the same trusted proxy gated logic as the access
 	//control check, so a header supplied address can neither break the limiter nor
 	//be spoofed to escape it

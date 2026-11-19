@@ -523,8 +523,12 @@ func (router *Router) handleCaptchaGating(w http.ResponseWriter, r *http.Request
 	// cannot satisfy a CIDR exception or be reported to the CAPTCHA provider
 	clientIP := router.GetClientIPForEndpoint(r, sep)
 
+	// CAPTCHA sessions are scoped to this proxy rule, so a session solved on
+	// another rule (with its own provider and settings) is not accepted here
+	captchaScope := sep.RootOrMatchingDomain
+
 	if r.URL.Path == captcha.VerifyPath {
-		captcha.HandleVerification(w, r, sep.CaptchaConfig, router.captchaSessionStore, clientIP)
+		captcha.HandleVerification(w, r, sep.CaptchaConfig, router.captchaSessionStore, captchaScope, clientIP)
 		return true, false
 	}
 
@@ -532,7 +536,7 @@ func (router *Router) handleCaptchaGating(w http.ResponseWriter, r *http.Request
 		return false, false
 	}
 
-	if captcha.CheckException(r, sep.CaptchaConfig.ExceptionRules, clientIP) || captcha.CheckSession(r, router.captchaSessionStore) {
+	if captcha.CheckException(r, sep.CaptchaConfig.ExceptionRules, clientIP) || captcha.CheckSession(r, router.captchaSessionStore, captchaScope) {
 		return false, false
 	}
 

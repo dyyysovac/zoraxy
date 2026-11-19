@@ -83,8 +83,15 @@ type ExceptionRule struct {
 
 // SessionStore manages active CAPTCHA sessions
 type SessionStore struct {
-	sessions sync.Map // map[sessionID]expiryTime
+	sessions sync.Map // map[sessionID]sessionEntry
 	stopChan chan struct{}
+}
+
+// sessionEntry is a verified CAPTCHA session. It is only valid on the scope
+// (proxy rule) the CAPTCHA was solved on
+type sessionEntry struct {
+	scope  string
+	expiry time.Time
 }
 
 // NewSessionStore creates a new CAPTCHA session store
@@ -105,23 +112,29 @@ func generateSessionID() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-// AddSession adds a new session with the specified duration
-func (s *SessionStore) AddSession(sessionID string, durationSeconds int) {
+// AddSession adds a new session for the given scope with the specified duration.
+// scope identifies the proxy rule the CAPTCHA was solved on
+func (s *SessionStore) AddSession(sessionID string, scope string, durationSeconds int) {
 	expiryTime := time.Now().Add(time.Duration(durationSeconds) * time.Second)
-	s.sessions.Store(sessionID, expiryTime)
+	s.sessions.Store(sessionID, sessionEntry{
+		scope:  scope,
+		expiry: expiryTime,
+	})
 }
 
-// IsValidSession checks if a session is valid and not expired
-func (s *SessionStore) IsValidSession(sessionID string) bool {
+// IsValidSession checks if a session is valid for the given scope and not expired.
+// A session solved on one proxy rule is not accepted by another rule, which
+// might use a stricter provider, score threshold or session duration
+func (s *SessionStore) IsValidSession(sessionID string, scope string) bool {
 	value, exists := s.sessions.Load(sessionID)
 	if !exists {
 		return false
 	}
-	expiryTime, ok := value.(time.Time)
+	session, ok := value.(sessionEntry)
 	if !ok {
 		return false
 	}
-	return time.Now().Before(expiryTime)
+	return session.scope == scope && time.Now().Before(session.expiry)
 }
 
 // RemoveSession removes a session from the store
@@ -144,8 +157,8 @@ func (s *SessionStore) cleanupExpiredSessions() {
 		case <-ticker.C:
 			now := time.Now()
 			s.sessions.Range(func(key, value interface{}) bool {
-				expiryTime, ok := value.(time.Time)
-				if !ok || now.After(expiryTime) {
+				session, ok := value.(sessionEntry)
+				if !ok || now.After(session.expiry) {
 					s.sessions.Delete(key)
 				}
 				return true
@@ -465,7 +478,9 @@ func RenderChallenge(w http.ResponseWriter, r *http.Request, config *Config, dom
 // HandleVerification processes CAPTCHA verification requests. clientIP is
 // forwarded to the provider as remoteip and must be resolved by the caller
 // with the endpoint's trusted proxy policy, same as CheckException.
-func HandleVerification(w http.ResponseWriter, r *http.Request, config *Config, sessionStore *SessionStore, clientIP string) error {
+// scope identifies the proxy rule being verified, the created session is
+// only valid on that rule (see CheckSession).
+func HandleVerification(w http.ResponseWriter, r *http.Request, config *Config, sessionStore *SessionStore, scope string, clientIP string) error {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return errors.New("invalid method")
@@ -559,7 +574,7 @@ func HandleVerification(w http.ResponseWriter, r *http.Request, config *Config, 
 	if duration == 0 {
 		duration = DefaultSessionDuration
 	}
-	sessionStore.AddSession(sessionID, duration)
+	sessionStore.AddSession(sessionID, scope, duration)
 
 	// Set cookie
 	cookie := &http.Cookie{
@@ -584,13 +599,14 @@ func HandleVerification(w http.ResponseWriter, r *http.Request, config *Config, 
 	return errors.New("response already written - captcha verified")
 }
 
-// CheckSession checks if a request has a valid CAPTCHA session
-func CheckSession(r *http.Request, sessionStore *SessionStore) bool {
+// CheckSession checks if a request has a valid CAPTCHA session for the given
+// scope (the proxy rule that is being accessed)
+func CheckSession(r *http.Request, sessionStore *SessionStore, scope string) bool {
 	cookie, err := r.Cookie(CookieName)
 	if err != nil {
 		return false
 	}
-	return sessionStore.IsValidSession(cookie.Value)
+	return sessionStore.IsValidSession(cookie.Value, scope)
 }
 
 // IsConfigured checks if the CAPTCHA config is properly set up

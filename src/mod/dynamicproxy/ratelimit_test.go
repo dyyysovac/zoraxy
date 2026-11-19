@@ -100,19 +100,23 @@ func TestHandleRateLimit_CountsPerRealClient(t *testing.T) {
 	router := newTestRateLimitRouter(t, true, "104.16.0.0/13")
 	pe := &ProxyEndpoint{RequireRateLimit: true, RateLimit: 3}
 
-	//Exceeded() blocks once the counter reaches the limit, so a limit of 3
-	//lets 2 requests through before the third is rejected
-	for i := 0; i < 2; i++ {
+	//A limit of 3 lets 3 requests through before the fourth is rejected
+	for i := 0; i < 3; i++ {
 		w := httptest.NewRecorder()
 		r := newTestRequest("104.16.5.1:443", map[string]string{"CF-Connecting-IP": "203.0.113.1"})
 		if err := router.handleRateLimit(w, r, pe); err != nil {
 			t.Fatalf("first client blocked too early at request %d", i)
 		}
 	}
+	w := httptest.NewRecorder()
+	r := newTestRequest("104.16.5.1:443", map[string]string{"CF-Connecting-IP": "203.0.113.1"})
+	if err := router.handleRateLimit(w, r, pe); err == nil {
+		t.Fatal("first client was not blocked after using up its limit")
+	}
 
 	//A different client through the same edge node must not be affected
-	w := httptest.NewRecorder()
-	r := newTestRequest("104.16.5.1:443", map[string]string{"CF-Connecting-IP": "203.0.113.2"})
+	w = httptest.NewRecorder()
+	r = newTestRequest("104.16.5.1:443", map[string]string{"CF-Connecting-IP": "203.0.113.2"})
 	if err := router.handleRateLimit(w, r, pe); err != nil {
 		t.Fatalf("second client should not share the first client's counter")
 	}
@@ -159,8 +163,62 @@ func TestHandleRateLimit_DirectConnection(t *testing.T) {
 		}
 	}
 
-	if blocked != 8 {
-		t.Errorf("expected 8 of 10 requests blocked at limit 3, got %d", blocked)
+	if blocked != 7 {
+		t.Errorf("expected 7 of 10 requests blocked at limit 3, got %d", blocked)
+	}
+}
+
+// A limit of N must allow exactly N requests per second, not N-1. With the
+// old off by one, a limit of 1 blocked every request with 429
+func TestHandleRateLimit_AllowsExactlyLimitRequests(t *testing.T) {
+	for _, limit := range []int64{1, 2, 5} {
+		router := newTestRateLimitRouter(t, false)
+		pe := &ProxyEndpoint{RequireRateLimit: true, RateLimit: limit}
+
+		for i := int64(0); i < limit; i++ {
+			w := httptest.NewRecorder()
+			r := newTestRequest("198.51.100.21:44321", nil)
+			if err := router.handleRateLimit(w, r, pe); err != nil {
+				t.Fatalf("limit %d: request %d blocked, expected %d requests to pass", limit, i+1, limit)
+			}
+		}
+
+		w := httptest.NewRecorder()
+		r := newTestRequest("198.51.100.21:44321", nil)
+		if err := router.handleRateLimit(w, r, pe); err == nil {
+			t.Fatalf("limit %d: request %d was not blocked", limit, limit+1)
+		}
+		if w.Code != 429 {
+			t.Errorf("limit %d: expected status 429 on block, got %d", limit, w.Code)
+		}
+
+		//The next one second window starts from zero again
+		router.rateLimitCounter.Clear()
+		w = httptest.NewRecorder()
+		r = newTestRequest("198.51.100.21:44321", nil)
+		if err := router.handleRateLimit(w, r, pe); err != nil {
+			t.Fatalf("limit %d: request blocked after the counter was reset", limit)
+		}
+	}
+}
+
+// A rule with rate limiting enabled but no usable limit (e.g. RateLimit 0 in a
+// hand edited config file) must not block all traffic to that rule
+func TestHandleRateLimit_ZeroLimitNeverBlocks(t *testing.T) {
+	for _, limit := range []int64{0, -1} {
+		router := newTestRateLimitRouter(t, false)
+		pe := &ProxyEndpoint{RequireRateLimit: true, RateLimit: limit}
+
+		for i := 0; i < 20; i++ {
+			w := httptest.NewRecorder()
+			r := newTestRequest("198.51.100.22:44321", nil)
+			if err := router.handleRateLimit(w, r, pe); err != nil {
+				t.Fatalf("limit %d: request %d blocked, expected no limit", limit, i+1)
+			}
+			if w.Code == 429 {
+				t.Fatalf("limit %d: request %d got status 429", limit, i+1)
+			}
+		}
 	}
 }
 

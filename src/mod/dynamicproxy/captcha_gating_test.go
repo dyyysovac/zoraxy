@@ -170,3 +170,48 @@ func TestHandleCaptchaGating_VerificationSendsTrustedProxyClientIP(t *testing.T)
 		t.Errorf("remoteip sent to provider = %q, expected the trusted proxy client IP 198.51.100.7", got)
 	}
 }
+
+// A CAPTCHA session solved on one proxy rule must not pass the CAPTCHA of
+// another rule. Bots can send the session cookie to any host, and the other
+// rule might use a stricter provider, score threshold or session duration
+func TestHandleCaptchaGating_SessionScopedToProxyRule(t *testing.T) {
+	stubCaptchaProvider(t)
+	router := newTestCaptchaRouter(t, false)
+	ruleA := newTestCaptchaEndpoint("")
+	ruleB := newTestCaptchaEndpoint("")
+	ruleB.RootOrMatchingDomain = "other.example.com"
+
+	//Solve the CAPTCHA on rule A
+	w := httptest.NewRecorder()
+	r := newTestCaptchaVerifyRequest("203.0.113.5:44321", nil)
+	if handled, _ := router.handleCaptchaGating(w, r, ruleA); !handled {
+		t.Fatal("verification request was not handled")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected verification to succeed with status 200, got %d", w.Code)
+	}
+	var sessionCookie *http.Cookie
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == captcha.CookieName {
+			sessionCookie = cookie
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("verification did not set a CAPTCHA session cookie")
+	}
+
+	//The session is accepted on rule A
+	r = newTestRequest("203.0.113.5:44321", nil)
+	r.AddCookie(sessionCookie)
+	if handled, challenged := router.handleCaptchaGating(httptest.NewRecorder(), r, ruleA); handled || challenged {
+		t.Fatalf("session was not accepted on the rule it was solved on (handled=%v, challenged=%v)", handled, challenged)
+	}
+
+	//The same cookie sent to rule B must still be challenged
+	r = newTestRequest("203.0.113.5:44321", nil)
+	r.Host = "other.example.com"
+	r.AddCookie(sessionCookie)
+	if _, challenged := router.handleCaptchaGating(httptest.NewRecorder(), r, ruleB); !challenged {
+		t.Fatal("CAPTCHA session solved on host.example.com passed the CAPTCHA of other.example.com")
+	}
+}
