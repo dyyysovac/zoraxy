@@ -13,10 +13,10 @@ type RequestCountPerIpTable struct {
 	table sync.Map
 }
 
-// Increment the count of requests for a given IP
-func (t *RequestCountPerIpTable) Increment(ip string) {
+// Increment the count of requests for a given IP and return the new count
+func (t *RequestCountPerIpTable) Increment(ip string) int64 {
 	v, _ := t.table.LoadOrStore(ip, new(int64))
-	atomic.AddInt64(v.(*int64), 1)
+	return atomic.AddInt64(v.(*int64), 1)
 }
 
 // Check if the IP is in the table and if it is, check if the count is over the limit.
@@ -73,10 +73,12 @@ func (router *Router) handleRateLimit(w http.ResponseWriter, r *http.Request, pe
 
 	//Count per proxy rule and client, so each rule enforces its own limit
 	//instead of all rules sharing one counter per IP (#1107)
+	//Use the count returned by the increment, so concurrent requests cannot
+	//all see each other's increments and get blocked below the limit
 	counterKey := rateLimitCounterKey(pe, ip)
-	router.rateLimitCounter.Increment(counterKey)
+	requestCount := router.rateLimitCounter.Increment(counterKey)
 
-	if router.rateLimitCounter.Exceeded(counterKey, int64(pe.RateLimit)) {
+	if requestCount > int64(pe.RateLimit) {
 		w.WriteHeader(429)
 		return errors.New("rate limit exceeded")
 	}

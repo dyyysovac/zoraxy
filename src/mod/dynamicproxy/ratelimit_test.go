@@ -258,3 +258,32 @@ func TestHandleRateLimit_CountsPerProxyRule(t *testing.T) {
 		t.Fatal("quiet site did not enforce its own rate limit")
 	}
 }
+
+// Requests arriving at the same time must not see each other's increments:
+// with N+1 concurrent requests exactly one is blocked
+func TestHandleRateLimit_ConcurrentRequests(t *testing.T) {
+	const limit = 5
+	router := newTestRateLimitRouter(t, false)
+	pe := &ProxyEndpoint{RootOrMatchingDomain: "concurrent.example.com", RequireRateLimit: true, RateLimit: limit}
+	for run := 0; run < 2000; run++ {
+		router.rateLimitCounter.Clear()
+		start := make(chan struct{})
+		results := make(chan error, limit+1)
+		for i := 0; i < limit+1; i++ {
+			go func() {
+				<-start
+				results <- router.handleRateLimit(httptest.NewRecorder(), newTestRequest("203.0.113.7:1234", nil), pe)
+			}()
+		}
+		close(start)
+		blocked := 0
+		for i := 0; i < limit+1; i++ {
+			if <-results != nil {
+				blocked++
+			}
+		}
+		if blocked != 1 {
+			t.Fatalf("run %d: %d of %d concurrent requests blocked at limit %d, want 1", run, blocked, limit+1, limit)
+		}
+	}
+}
