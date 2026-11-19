@@ -568,7 +568,8 @@
       }else if (filename == "" && domains.includes(",")){
         parent.msgbox("Filename cannot be empty for certs containing multiple domains.", false, 5000);
         $("#obtainButton").removeClass("loading").removeClass("disabled");
-        return;
+        //Return an empty string (not undefined) so the callers' empty filename check stops the request
+        return "";
       }
 
       //Filename cannot contain wildcards, and wildcards are possible with DNS challenges

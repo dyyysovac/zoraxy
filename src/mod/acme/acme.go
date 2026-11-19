@@ -486,6 +486,23 @@ func contains(slice []string, str string) bool {
 	return false
 }
 
+// mergeDomainsKeepOrder returns the unique domains of both lists, keeping the
+// order of the first list followed by the domains only found in the second
+func mergeDomainsKeepOrder(primary []string, extra []string) []string {
+	merged := make([]string, 0, len(primary)+len(extra))
+	seen := map[string]struct{}{}
+	for _, list := range [][]string{primary, extra} {
+		for _, d := range list {
+			if _, ok := seen[d]; ok {
+				continue
+			}
+			seen[d] = struct{}{}
+			merged = append(merged, d)
+		}
+	}
+	return merged
+}
+
 // HandleGetExpiredDomains handles the HTTP GET request to retrieve the list of expired domains.
 // It calls the CheckCertificate method to obtain the expired domains and sends a JSON response
 // containing the list of expired domains.
@@ -586,20 +603,9 @@ func (a *ACMEHandler) HandleRenewCertificate(w http.ResponseWriter, r *http.Requ
 	pemPath := fmt.Sprintf("./conf/certs/%s.pem", filename)
 	sanDomains, err := ExtractDomainsFromPEM(pemPath)
 	if err == nil {
-		// Merge domainPara + SANs
-		domainSet := map[string]struct{}{}
-		for _, d := range cleanedDomains {
-			domainSet[d] = struct{}{}
-		}
-		for _, d := range sanDomains {
-			domainSet[d] = struct{}{}
-		}
-
-		// Rebuild cleanedDomains with all unique domains
-		cleanedDomains = []string{}
-		for d := range domainSet {
-			cleanedDomains = append(cleanedDomains, d)
-		}
+		// Merge domainPara + SANs. Keep the requested domains first and in
+		// order, the first domain becomes the CN of the new certificate
+		cleanedDomains = mergeDomainsKeepOrder(cleanedDomains, sanDomains)
 
 		a.Logf("Renewal domains including SANs from PEM: "+strings.Join(cleanedDomains, ","), nil)
 	} else {

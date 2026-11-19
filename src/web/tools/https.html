@@ -207,7 +207,9 @@
         //Invalid settings. Force the filename to be same as domain
         //if there are only 1 domain
         filename = domains;
-      }else{
+      }else if (filename.trim() == "" && domains.includes(",")){
+        //Multiple domains require an explicit filename. A filename that is
+        //given for multiple domains is used as is (#611)
         alert("Filename cannot be empty for certs containing multiple domains.")
         return;
       }

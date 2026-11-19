@@ -246,11 +246,18 @@
                 //if there are only 1 domain
                 filename = domains;
             }else{
-                msgbox("Filename cannot be empty for certs containing multiple domains.")
-                if (callback != undefined){
-                    callback(false);
+                //Multiple domains, e.g. a proxy host with alias domains (#611).
+                //There is no filename input on this path, so name the certificate
+                //after the first (root) domain. Certificates are matched by their
+                //SANs, so the alias domains are still served by this certificate.
+                filename = domains.split(",")[0].trim();
+                if (filename == ""){
+                    msgbox("Filename cannot be empty for certs containing multiple domains.", false)
+                    if (callback != undefined){
+                        callback(false);
+                    }
+                    return;
                 }
-                return;
             }
             //Filename cannot contain wildcards, and wildcards are possible with DNS challenges
             filename = filename.replace("*", "_");
