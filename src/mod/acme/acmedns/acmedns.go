@@ -336,7 +336,9 @@ func GetDNSProviderByJsonConfig(name string, js string, propagationTimeout int64
 		}
 		cfg.PropagationTimeout = pgDuration
 		cfg.PollingInterval = plInterval
-		cfg.Endpoint = hostURL
+		if hostURL != nil {
+			cfg.Endpoint = hostURL
+		}
 		return autodns.NewDNSProviderConfig(cfg)
 	case "axelname":
 		cfg := axelname.NewDefaultConfig()
@@ -445,7 +447,9 @@ func GetDNSProviderByJsonConfig(name string, js string, propagationTimeout int64
 		}
 		cfg.PropagationTimeout = pgDuration
 		cfg.PollingInterval = plInterval
-		cfg.Endpoint = hostURL
+		if hostURL != nil {
+			cfg.Endpoint = hostURL
+		}
 		return checkdomain.NewDNSProviderConfig(cfg)
 	case "civo":
 		cfg := civo.NewDefaultConfig()
@@ -797,7 +801,9 @@ func GetDNSProviderByJsonConfig(name string, js string, propagationTimeout int64
 		}
 		cfg.PropagationTimeout = pgDuration
 		cfg.PollingInterval = plInterval
-		cfg.Endpoint = hostURL
+		if hostURL != nil {
+			cfg.Endpoint = hostURL
+		}
 		return easydns.NewDNSProviderConfig(cfg)
 	case "edgecenter":
 		cfg := edgecenter.NewDefaultConfig()
@@ -1590,7 +1596,9 @@ func GetDNSProviderByJsonConfig(name string, js string, propagationTimeout int64
 		}
 		cfg.PropagationTimeout = pgDuration
 		cfg.PollingInterval = plInterval
-		cfg.Host = hostURL
+		if hostURL != nil {
+			cfg.Host = hostURL
+		}
 		return pdns.NewDNSProviderConfig(cfg)
 	case "plesk":
 		cfg := plesk.NewDefaultConfig()
@@ -1942,7 +1950,9 @@ func GetDNSProviderByJsonConfig(name string, js string, propagationTimeout int64
 		}
 		cfg.PropagationTimeout = pgDuration
 		cfg.PollingInterval = plInterval
-		cfg.BaseURL = hostURL
+		if hostURL != nil {
+			cfg.BaseURL = hostURL
+		}
 		return versio.NewDNSProviderConfig(cfg)
 	case "vinyldns":
 		cfg := vinyldns.NewDefaultConfig()
@@ -2123,7 +2133,9 @@ func GetDNSProviderByJsonConfig(name string, js string, propagationTimeout int64
 		}
 		cfg.PropagationTimeout = pgDuration
 		cfg.PollingInterval = plInterval
-		cfg.Endpoint = hostURL
+		if hostURL != nil {
+			cfg.Endpoint = hostURL
+		}
 		return zoneee.NewDNSProviderConfig(cfg)
 	case "zonomi":
 		cfg := zonomi.NewDefaultConfig()

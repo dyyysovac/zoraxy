@@ -406,7 +406,17 @@ func (a *AutoRenewer) renewExpiredDomains(certs []*ExpiredCerts) ([]string, erro
 			a.Logf("Could not extract SANs from PEM for "+fileName+", using original domains", errSan)
 		}
 
-		_, err = a.AcmeHandler.ObtainCert(expiredCert.Domains, certName, a.RenewerConfig.Email, certInfo.AcmeName, certInfo.AcmeUrl, certInfo.SkipTLS, certInfo.UseDNS, certInfo.PropTimeout, dnsServers, certInfo.DisableRecursiveNssCheck, certInfo.DisableAuthoritativeNssCheck)
+		err = func() (err error) {
+			//This runs in the renew goroutines, where a panic (e.g. from a broken
+			//saved DNS provider config) would stop the whole process
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("unexpected error while renewing certificate: %v", r)
+				}
+			}()
+			_, err = a.AcmeHandler.ObtainCert(expiredCert.Domains, certName, a.RenewerConfig.Email, certInfo.AcmeName, certInfo.AcmeUrl, certInfo.SkipTLS, certInfo.UseDNS, certInfo.PropTimeout, dnsServers, certInfo.DisableRecursiveNssCheck, certInfo.DisableAuthoritativeNssCheck)
+			return err
+		}()
 		if err != nil {
 			a.Logf("Renew "+fileName+"("+strings.Join(expiredCert.Domains, ",")+") failed", err)
 		} else {

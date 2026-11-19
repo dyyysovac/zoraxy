@@ -491,13 +491,13 @@
       "selfhostde": {"RecordsMapping": "example.com:123:456,other.example.com:789"},
       //URL of the Plesk server
       "plesk": {"baseURL": "https://plesk.example.com:8443"},
+      //Required organization ID from the Yandex 360 admin panel
+      "yandex360": {"OrgID": "Organization ID"},
       //zone:password pairs from the syse panel
       "syse": {"Credentials": "example.com:password,example.org:password2"},
     };
-    //Int fields that must be entered by the user instead of using a default value
-    const dnsConfigFieldsWithoutDefault = {
-      "yandex360": ["OrgID"],
-    };
+    //Checkboxes whose lego default is true. All other checkboxes default to false
+    const dnsConfigBoolFieldsDefaultOn = ["SSLVerify"];
 
     //On DNS provider dropdown change
     $("input[name=dnsProvider]").on('change', function() {
@@ -510,21 +510,23 @@
         let optionalFieldsHTML = "";
         for (const [key, datatype] of Object.entries(data)) {
           if (datatype == "int"){
-            let defaultValue = 10;
+            //Left empty by default so the lego default is used (e.g. pdns APIVersion
+            //0 means auto-detect, autodns Context is 4). Empty fields are not sent
+            let defaultValue = "";
             if (key == "HTTPTimeout"){
               defaultValue = 300;
-            }else if ((dnsConfigFieldsWithoutDefault[newProviderName] || []).includes(key)){
-              defaultValue = "";
             }
+            let placeholder = (dnsConfigFieldPlaceholders[newProviderName] || {})[key] || "Default";
             $("#dnsProviderAPIFields").append(`<div class="ui fluid labeled dnsConfigField input typeint" key="${key}" style="margin-top: 0.2em;">
               <div class="ui basic blue label" style="font-weight: 300;">
                 ${key}
               </div>
-              <input type="number" value="${defaultValue}">
+              <input type="number" value="${defaultValue}" placeholder="${placeholder}">
             </div>`);
           }else if (datatype == "bool"){
+             let checkedByDefault = dnsConfigBoolFieldsDefaultOn.includes(key)?"checked":"";
              booleanFieldsHTML += (`<div class="ui checkbox dnsConfigField" key="${key}" style="margin-top: 1em !important; padding-left: 0.4em;">
-              <input type="checkbox">
+              <input type="checkbox" ${checkedByDefault}>
               <label>${key}</label>
             </div>`);
           }else if (datatype == "time.Duration"){
@@ -682,9 +684,11 @@
           let checked = $(this).find("input")[0].checked;
           dnsCredentials[thisKey] = checked;
         }else if ($(this).hasClass("typeint")){
-          //Int options
-          let value = $(this).find("input").val();
-          dnsCredentials[thisKey] = parseInt(value);
+          //Int options. Leave out empty fields to keep the lego default
+          let value = parseInt($(this).find("input").val());
+          if (!isNaN(value)){
+            dnsCredentials[thisKey] = value;
+          }
         }else{
           //String options
           let value = $(this).find("input").val().trim();

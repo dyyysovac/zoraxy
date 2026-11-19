@@ -329,8 +329,11 @@ func main() {
 		}
 
 		if hostKey != "" {
+			// Keep the default endpoint from NewDefaultConfig() when no URL is given
 			codeSegment += `
-		cfg.` + hostKey + ` = hostURL`
+		if hostURL != nil {
+			cfg.` + hostKey + ` = hostURL
+		}`
 		}
 		codeSegment += `
 		return ` + providerName + `.NewDNSProviderConfig(cfg)`
