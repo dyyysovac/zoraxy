@@ -466,6 +466,38 @@ func (a *AutoRenewer) HanldeSetEAB(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handle update auto renew DNS configuration
+// keepStoredDnsCredentials returns true if the posted DNS credentials only
+// repeat the provider stored for the certificate without entering any value,
+// i.e. the user requested the certificate again without retyping the secrets.
+// A different provider or any entered value replaces the stored credentials,
+// and so does a first configuration (some providers, e.g. route53 with
+// credentials from the environment, need no value at all)
+func (a *AutoRenewer) keepStoredDnsCredentials(filename string, dnsProvider string, dnsCredentials string) bool {
+	storedProvider := ""
+	storedCredentials := ""
+	if err := a.AcmeHandler.Database.Read("acme", filename+"_dns_provider", &storedProvider); err != nil || storedProvider != dnsProvider {
+		return false
+	}
+	if err := a.AcmeHandler.Database.Read("acme", filename+"_dns_credentials", &storedCredentials); err != nil || storedCredentials == "" {
+		return false
+	}
+
+	posted := map[string]any{}
+	if err := json.Unmarshal([]byte(dnsCredentials), &posted); err != nil {
+		return false
+	}
+	for key, value := range posted {
+		if key == "PollingInterval" || key == "PropagationTimeout" {
+			//Always filled in by the form
+			continue
+		}
+		if str, ok := value.(string); ok && strings.TrimSpace(str) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 func (a *AutoRenewer) HandleSetDNS(w http.ResponseWriter, r *http.Request) {
 	dnsProvider, err := utils.PostPara(r, "dnsProvider")
 	if err != nil {
@@ -494,8 +526,14 @@ func (a *AutoRenewer) HandleSetDNS(w http.ResponseWriter, r *http.Request) {
 		a.AcmeHandler.Database.NewTable("acme")
 	}
 
+	if a.keepStoredDnsCredentials(filename, dnsProvider, dnsCredentials) {
+		//The form does not show the stored credentials, so requesting the
+		//certificate again without retyping them must not save an empty config
+		a.Logf("No DNS credentials entered for "+filename+", keeping the stored "+dnsProvider+" credentials", nil)
+	} else {
+		a.AcmeHandler.Database.Write("acme", filename+"_dns_credentials", dnsCredentials)
+	}
 	a.AcmeHandler.Database.Write("acme", filename+"_dns_provider", dnsProvider)
-	a.AcmeHandler.Database.Write("acme", filename+"_dns_credentials", dnsCredentials)
 	a.AcmeHandler.Database.Write("acme", filename+"_dns_servers", dnsServers)
 
 	utils.SendOK(w)

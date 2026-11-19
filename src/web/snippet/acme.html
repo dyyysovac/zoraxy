@@ -712,21 +712,8 @@
         return;
       }
 
-      //Check if all text fields (credentials, URLs...) are empty. If yes, do not update the config
-      //Number and checkbox fields always have a value (pre-filled defaults, "on"), so they are not checked
-      let allFieldsEmpty = true;
-      $(".dnsConfigField input[type=text]").each(function(){
-        if ($(this).val().trim() != ""){
-          allFieldsEmpty = false;
-        }
-      });
-      if (allFieldsEmpty){
-        //Do not update config on server side
-        if (callback != undefined){
-          callback(true);
-        }
-        return;
-      }
+      //Always send the config. If nothing was entered for the provider that is
+      //already stored, the server keeps the stored credentials (HandleSetDNS)
 
       dnsProvider = $("#dnsProvider").dropdown("get value");
 
