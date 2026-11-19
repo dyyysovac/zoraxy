@@ -43,7 +43,21 @@ func GetProviderConfigStructure(providerName string) (map[string]string, error) 
 		results[field.Title] = field.Datatype
 	}
 
+	// Add the fields the code generator cannot expose (see extraConfigurableFields)
+	for title, datatype := range extraConfigurableFields[providerName] {
+		results[title] = datatype
+	}
+
 	return results, nil
+}
+
+// extraConfigurableFields lists the settings that the code generator skips
+// because the lego config type has no JSON representation, but that are
+// required to use the provider. They are turned into the lego config by
+// hand in mod/acme/acme_dns_special.go
+var extraConfigurableFields = map[string]map[string]string{
+	// map[string]*selfhostde.Seq, entered as "domain:recordID[:recordID],..." (#1067)
+	"selfhostde": {"RecordsMapping": "string"},
 }
 
 // HandleServeProvidersJson return the list of supported providers as json

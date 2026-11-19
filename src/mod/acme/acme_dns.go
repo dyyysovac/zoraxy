@@ -21,7 +21,7 @@ func GetDnsChallengeProviderByName(dnsProvider string, dnsCredentials string, pp
 	// Clear the PollingInterval and PropagationTimeout field and conert to int
 	userDefinedPollingInterval := 2
 	if dnsCredentialsMap["PollingInterval"] != nil {
-		userDefinedPollingIntervalRaw := dnsCredentialsMap["PollingInterval"].(string)
+		userDefinedPollingIntervalRaw := credentialString(dnsCredentialsMap, "PollingInterval")
 		delete(dnsCredentialsMap, "PollingInterval")
 		convertedPollingInterval, err := strconv.Atoi(userDefinedPollingIntervalRaw)
 		if err == nil {
@@ -31,13 +31,19 @@ func GetDnsChallengeProviderByName(dnsProvider string, dnsCredentials string, pp
 
 	userDefinedPropagationTimeout := ppgTimeout
 	if dnsCredentialsMap["PropagationTimeout"] != nil {
-		userDefinedPropagationTimeoutRaw := dnsCredentialsMap["PropagationTimeout"].(string)
+		userDefinedPropagationTimeoutRaw := credentialString(dnsCredentialsMap, "PropagationTimeout")
 		delete(dnsCredentialsMap, "PropagationTimeout")
 		convertedPropagationTimeout, err := strconv.Atoi(userDefinedPropagationTimeoutRaw)
 		if err == nil {
 			// Overwrite the default propagation timeout if it is requeted from UI
 			userDefinedPropagationTimeout = convertedPropagationTimeout
 		}
+	}
+
+	// Providers whose lego config cannot be filled from JSON (see acme_dns_special.go)
+	provider, handled, err := getSpecialDnsProvider(dnsProvider, dnsCredentialsMap, userDefinedPropagationTimeout, userDefinedPollingInterval)
+	if handled {
+		return provider, err
 	}
 
 	providerConfigStructure, err := acmedns.GetProviderConfigStructure(dnsProvider)

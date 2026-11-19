@@ -485,6 +485,14 @@
       }
     })
 
+    //Format hints for DNS provider fields that are not self explanatory
+    const dnsConfigFieldPlaceholders = {
+      //selfhostde: TXT record IDs prepared in the selfhost.de panel, two IDs for wildcard domains
+      "RecordsMapping": "example.com:123:456,other.example.com:789",
+      //plesk: URL of the Plesk server
+      "baseURL": "https://plesk.example.com:8443"
+    };
+
     //On DNS provider dropdown change
     $("input[name=dnsProvider]").on('change', function() {
       let newProviderName = $("#dnsProvider").find("input").val();
@@ -533,11 +541,12 @@
           
           }else{
             //Default to string
+            let placeholder = dnsConfigFieldPlaceholders[key] || "";
             $("#dnsProviderAPIFields").append(`<div class="ui fluid labeled input dnsConfigField" key="${key}" style="margin-top: 0.2em;">
               <div class="ui basic label" style="font-weight: 300;">
                 ${key}
               </div>
-              <input type="text">
+              <input type="text" placeholder="${placeholder}">
             </div>`);
           }
         }
