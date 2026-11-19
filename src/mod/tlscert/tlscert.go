@@ -27,7 +27,7 @@ type HostSpecificTlsBehavior struct {
 	DisableSNI                       bool              //If SNI is enabled for this server name
 	DisableLegacyCertificateMatching bool              //If legacy certificate matching is disabled for this server name
 	EnableAutoHTTPS                  bool              //If auto HTTPS is enabled for this server name
-	PreferredCertificate             map[string]string //Preferred certificate for this server name, if empty, use the first matching certificate
+	PreferredCertificate             map[string]string //Preferred certificate for this server name, if empty, use the best matching certificate (see GetCertByX509CNHostname)
 }
 
 type Manager struct {
@@ -134,7 +134,7 @@ func GetDefaultHostSpecificTlsBehavior() *HostSpecificTlsBehavior {
 		DisableSNI:                       false,
 		DisableLegacyCertificateMatching: false,
 		EnableAutoHTTPS:                  false,
-		PreferredCertificate:             map[string]string{}, // No preferred certificate, use the first matching certificate
+		PreferredCertificate:             map[string]string{}, // No preferred certificate, use the best matching certificate
 	}
 }
 
@@ -313,7 +313,7 @@ func (m *Manager) GetCertificateByHostname(hostname string) (string, string, err
 			priKey = filepath.Join(m.CertStore, hostname+".key")
 		} else if !tlsBehavior.DisableSNI &&
 			m.CertMatchExists(hostname) {
-			//SNI scan match, find the first matching certificate
+			//SNI scan match, prefer the valid matching certificate with the latest expiry
 			pubKey, priKey = m.GetCertByX509CNHostname(hostname)
 		} else if tlsBehavior.EnableAutoHTTPS {
 			//Get certificate from CA, WIP
