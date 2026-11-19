@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-acme/lego/v5/acme"
@@ -64,6 +65,9 @@ type ACMEHandler struct {
 	TestMode       bool
 	KeyFileMode    os.FileMode
 	PublicFileMode os.FileMode
+
+	// Number of ObtainCert calls currently solving an HTTP-01 challenge
+	httpChallengesInFlight atomic.Int32
 }
 
 // NewACME creates a new ACMEHandler instance.
@@ -279,6 +283,10 @@ func (a *ACMEHandler) ObtainCert(domains []string, certificateName string, email
 			a.Logf("Failed to resolve HTTP01 Provider", err)
 			return false, err
 		}
+		// Mark the HTTP-01 challenge as in progress until this function returns,
+		// so the proxy only intercepts /.well-known/acme-challenge/ while needed
+		a.httpChallengesInFlight.Add(1)
+		defer a.httpChallengesInFlight.Add(-1)
 	}
 
 	// New users will need to register
@@ -459,6 +467,13 @@ func (a *ACMEHandler) CheckCertificate() []string {
 // return the current port number
 func (a *ACMEHandler) Getport() string {
 	return a.Port
+}
+
+// HTTPChallengeInProgress returns true while Zoraxy is solving an HTTP-01
+// challenge, i.e. while requests to /.well-known/acme-challenge/ must be
+// answered by Zoraxy instead of being forwarded to the proxy backend
+func (a *ACMEHandler) HTTPChallengeInProgress() bool {
+	return a.httpChallengesInFlight.Load() > 0
 }
 
 // contains checks if a string is present in a slice.

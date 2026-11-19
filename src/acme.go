@@ -82,6 +82,12 @@ func acmeRegisterSpecialRoutingRule() {
 	err := dynamicProxyRouter.AddRoutingRules(&dynamicproxy.RoutingRule{
 		ID: "acme-autorenew",
 		MatchRule: func(r *http.Request) bool {
+			// Only intercept while Zoraxy is solving an HTTP-01 challenge itself.
+			// Outside of that window the request is routed like any other one,
+			// so backends that run their own ACME client keep working (#1342)
+			if acmeHandler == nil || !acmeHandler.HTTPChallengeInProgress() {
+				return false
+			}
 			// Use ParseRequestURI for strict RFC 3986 validation.
 			parsedURL, err := url.ParseRequestURI(r.RequestURI)
 			if err != nil {
