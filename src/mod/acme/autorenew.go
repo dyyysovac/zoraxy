@@ -492,8 +492,11 @@ func (a *AutoRenewer) keepStoredDnsCredentials(filename string, dnsProvider stri
 	if err := a.AcmeHandler.Database.Read("acme", filename+"_dns_credentials", &storedCredentials); err != nil {
 		return false
 	}
+	// Only a stored config that holds a credential is worth keeping. One
+	// without any (e.g. route53 with credentials from the environment) is
+	// replaced, so its other settings can still be changed
 	stored := map[string]any{}
-	if err := json.Unmarshal([]byte(storedCredentials), &stored); err != nil || len(stored) == 0 {
+	if err := json.Unmarshal([]byte(storedCredentials), &stored); err != nil || !dnsCredentialsEntered(stored) {
 		return false
 	}
 
@@ -501,16 +504,21 @@ func (a *AutoRenewer) keepStoredDnsCredentials(filename string, dnsProvider stri
 	if err := json.Unmarshal([]byte(dnsCredentials), &posted); err != nil {
 		return false
 	}
-	for key, value := range posted {
+	return !dnsCredentialsEntered(posted)
+}
+
+// dnsCredentialsEntered returns true if the DNS config holds a non-empty text
+// value other than the timeouts, which the form always fills in
+func dnsCredentialsEntered(credentials map[string]any) bool {
+	for key, value := range credentials {
 		if strings.EqualFold(key, "PollingInterval") || strings.EqualFold(key, "PropagationTimeout") {
-			//Always filled in by the form
 			continue
 		}
 		if str, ok := value.(string); ok && strings.TrimSpace(str) != "" {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // Handle update auto renew DNS configuration

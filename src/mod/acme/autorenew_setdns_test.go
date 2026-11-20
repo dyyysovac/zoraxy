@@ -60,6 +60,16 @@ func TestHandleSetDNS_KeepsStoredCredentials(t *testing.T) {
 		t.Fatalf("first configuration not saved, provider = %q", provider)
 	}
 
+	//A stored config without any credential is not kept, so its other
+	//settings can still be changed
+	const route53Retries = `{"AccessKeyID":"","MaxRetries":10,"PollingInterval":"5","PropagationTimeout":"1800","SecretAccessKey":""}`
+	if postSetDNS(t, renewer, "route53", route53Retries) {
+		t.Error("stored config without credentials reported as kept")
+	}
+	if _, credentials := storedDNS(t, db); credentials != route53Retries {
+		t.Fatalf("settings of a config without credentials not saved: %q", credentials)
+	}
+
 	//Switching provider replaces the config
 	postSetDNS(t, renewer, "cloudflare", cloudflare)
 	if provider, credentials := storedDNS(t, db); provider != "cloudflare" || credentials != cloudflare {
