@@ -24,8 +24,8 @@ var (
 	acmePort80Lock sync.Mutex
 	// Number of HTTP-01 challenges in progress
 	acmePort80Users int
-	// Stops the temporary challenge listener, nil if none is running
-	acmeStopChallengeListener func()
+	// The temporary challenge listener was started for the challenges in progress
+	acmeChallengeListenerStarted bool
 )
 
 // markReverseProxyStarted signals that the reverse proxy start up is done
@@ -51,12 +51,11 @@ func acmePrepareHTTP01Challenge() (release func()) {
 	acmePort80Users++
 	if acmePort80Users == 1 && dynamicProxyRouter != nil && dynamicProxyRouter.Running &&
 		dynamicProxyRouter.Option.Port == 443 && !dynamicProxyRouter.GetPort80ListenerState() {
-		stop, err := dynamicProxyRouter.StartChallengeListener(":80")
-		if err != nil {
+		if err := dynamicProxyRouter.StartChallengeListener(":80"); err != nil {
 			SystemWideLogger.PrintAndLog("ACME", "Unable to listen on port 80 for the HTTP-01 challenge, another program using port 80 has to forward it to Zoraxy", err)
 		} else {
 			SystemWideLogger.PrintAndLog("ACME", "Temporarily listening on port 80 to answer the HTTP-01 challenge", nil)
-			acmeStopChallengeListener = stop
+			acmeChallengeListenerStarted = true
 		}
 	}
 
@@ -72,10 +71,13 @@ func acmeReleaseHTTP01Challenge() {
 	acmePort80Lock.Lock()
 	defer acmePort80Lock.Unlock()
 	acmePort80Users--
-	if acmePort80Users > 0 || acmeStopChallengeListener == nil {
+	if acmePort80Users > 0 || !acmeChallengeListenerStarted {
 		return
 	}
-	acmeStopChallengeListener()
-	acmeStopChallengeListener = nil
-	SystemWideLogger.PrintAndLog("ACME", "Temporary port 80 challenge listener stopped", nil)
+	acmeChallengeListenerStarted = false
+	// The proxy may have taken port 80 over in the meantime (see
+	// challenge_listener.go), then there is nothing to stop
+	if dynamicProxyRouter.StopChallengeListener() {
+		SystemWideLogger.PrintAndLog("ACME", "Temporary port 80 challenge listener stopped", nil)
+	}
 }

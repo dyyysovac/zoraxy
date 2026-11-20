@@ -1887,7 +1887,8 @@ func HandleUpdatePort80Listener(w http.ResponseWriter, r *http.Request) {
 		}
 		if enabled {
 			//Check if port 80 is already used by other services
-			if netutils.CheckIfPortOccupied(80) && !dynamicProxyRouter.GetPort80ListenerState() {
+			//The temporary ACME challenge listener is taken over by the proxy
+			if netutils.CheckIfPortOccupied(80) && !dynamicProxyRouter.GetPort80ListenerState() && !dynamicProxyRouter.ChallengeListenerRunning() {
 				utils.SendErrorResponse(w, "Port 80 is already used by other services")
 				return
 			}

@@ -147,6 +147,9 @@ type Router struct {
 	secondaryStopChans   map[string]chan bool    //Stop channels for secondary listening servers
 	secondaryServerMutex sync.RWMutex            //Mutex for accessing secondary server maps
 
+	// Temporary port 80 listener for ACME HTTP-01 challenges (see challenge_listener.go)
+	challengeListenerStop func()     //Stops the challenge listener, nil if it is not running
+	challengeListenerLock sync.Mutex //Mutex for challengeListenerStop
 }
 
 /* Basic Auth Related Data structure*/

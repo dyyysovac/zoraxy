@@ -213,6 +213,13 @@ func (router *Router) StartProxyService() error {
 		return errors.New("reverse proxy router root not set")
 	}
 
+	//The proxy serves port 80 itself, take it over from the temporary ACME
+	//challenge listener. Every port 80 handler answers the routing rules (the
+	//ACME challenge) first, so a challenge in progress is still answered
+	if router.Option.Port == 80 || router.Option.ListenOnPort80 {
+		router.StopChallengeListener()
+	}
+
 	minVersion := tls.VersionTLS12 //Default to TLS 1.2
 	if router.Option.MinTLSVersion != 0 {
 		minVersion = int(router.Option.MinTLSVersion)
@@ -611,6 +618,12 @@ func (router *Router) startSecondaryListeners() {
 
 		if exists {
 			continue
+		}
+
+		//Take port 80 over from the temporary ACME challenge listener, the
+		//secondary port handler answers the challenge first as well
+		if _, port, err := net.SplitHostPort(addr); err == nil && port == "80" {
+			router.StopChallengeListener()
 		}
 
 		router.Option.Logger.PrintAndLog("dprouter", "Starting secondary listener on "+addr+" for domains: "+strings.Join(domains, ", "), nil)
